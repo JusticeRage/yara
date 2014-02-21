@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Generic auto-generated build files
 *~
 *.a
@@ -44,3 +45,23 @@ stamp-h1
 # Project specific files
 /yara
 /yarac
+=======
+# Object files
+*.o
+*.ko
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+>>>>>>> d56da79214e83ac60f16e6e602ebb43a1051bd20
