@@ -612,6 +612,10 @@ typedef struct _YR_RULES {
 extern char lowercase[256];
 extern char altercase[256];
 
+#if defined (__cplusplus)
+extern "C" {
+#endif
+
 void yr_initialize(void);
 
 
@@ -750,3 +754,6 @@ int yr_rules_define_string_variable(
 
 #endif
 
+#if defined (__cplusplus)
+}
+#endif

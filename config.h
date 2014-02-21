@@ -7,9 +7,6 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
 
-/* Define to 1 if you have the `pthread' library (-lpthread). */
-#define HAVE_LIBPTHREAD 1
-
 /* Define to 1 if you have the <memory.h> header file. */
 #define HAVE_MEMORY_H 1
 
@@ -39,19 +36,19 @@
 #define LT_OBJDIR ".libs/"
 
 /* Name of package */
-#define PACKAGE "yara"
+#define PACKAGE "libyara"
 
 /* Define to the address where bug reports for this package should be sent. */
 #define PACKAGE_BUGREPORT "vmalvarez@virustotal.com"
 
 /* Define to the full name of this package. */
-#define PACKAGE_NAME "yara"
+#define PACKAGE_NAME "libyara"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "yara 2.0"
+#define PACKAGE_STRING "libyara 2.0"
 
 /* Define to the one symbol short name of this package. */
-#define PACKAGE_TARNAME "yara"
+#define PACKAGE_TARNAME "libyara"
 
 /* Define to the version of this package. */
 #define PACKAGE_VERSION "2.0"
@@ -61,3 +58,7 @@
 
 /* Version number of package */
 #define VERSION "2.0"
+
+/* Define to 1 if `lex' declares `yytext' as a `char *' by default, not a
+   `char[]'. */
+#define YYTEXT_POINTER 1
