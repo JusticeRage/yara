@@ -487,7 +487,10 @@ typedef struct _YR_HASH_TABLE_ENTRY
 
 } YR_HASH_TABLE_ENTRY;
 
-
+#if _MSC_VER && !__INTEL_COMPILER
+ #pragma warning( push )
+ #pragma warning( disable : 4200 )
+#endif
 typedef struct _YR_HASH_TABLE
 {
   int size;
@@ -495,6 +498,9 @@ typedef struct _YR_HASH_TABLE
   YR_HASH_TABLE_ENTRY* buckets[0];
 
 } YR_HASH_TABLE;
+#if _MSC_VER && !__INTEL_COMPILER
+ #pragma warning( pop )
+#endif
 
 
 typedef struct _YR_ATOM_LIST_ITEM
@@ -694,13 +700,13 @@ int yr_compiler_get_rules(
 
 
 int yr_rules_scan_mem(
-    YR_RULES* rules,
-    uint8_t* buffer,
-    size_t buffer_size,
-    YR_CALLBACK_FUNC callback,
-    void* user_data,
-    int fast_scan_mode,
-    int timeout);
+	YR_RULES* rules,
+	uint8_t* buffer,
+	size_t buffer_size,
+	YR_CALLBACK_FUNC callback,
+	void* user_data,
+	int fast_scan_mode,
+	int timeout);
 
 
 int yr_rules_scan_file(
