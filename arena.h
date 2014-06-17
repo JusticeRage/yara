@@ -50,6 +50,11 @@ int yr_arena_coalesce(
     YR_ARENA* arena);
 
 
+int yr_arena_reserve_memory(
+    YR_ARENA* arena,
+    size_t size);
+
+
 int yr_arena_allocate_memory(
     YR_ARENA* arena,
     size_t size,
@@ -100,6 +105,9 @@ int yr_arena_load(
 int yr_arena_duplicate(
     YR_ARENA* arena,
     YR_ARENA** duplicated);
+    
+void yr_arena_print(
+    YR_ARENA* arena);
 
 #endif
 

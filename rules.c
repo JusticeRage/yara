@@ -184,6 +184,9 @@ int _yr_scan_fast_hex_re_exec(
 
   increment = flags & RE_FLAGS_BACKWARDS ? -1 : 1;
 
+  if (flags & RE_FLAGS_BACKWARDS)
+    input--;
+
   code_stack[sp] = code;
   input_stack[sp] = input;
   matches_stack[sp] = 0;
@@ -199,6 +202,23 @@ int _yr_scan_fast_hex_re_exec(
 
     while(!stop)
     {
+      if (*ip == RE_OPCODE_MATCH)
+      {
+        if (flags & RE_FLAGS_EXHAUSTIVE)
+        {
+            callback(
+               flags & RE_FLAGS_BACKWARDS ? current_input + 1 : input,
+               matches,
+               flags,
+               callback_args);
+            break;
+        }
+        else
+        {
+            return matches;
+        }
+      }
+
       if (flags & RE_FLAGS_BACKWARDS)
       {
         if (current_input <= input - input_size)
@@ -282,23 +302,6 @@ int _yr_scan_fast_hex_re_exec(
 
         default:
           assert(FALSE);
-      }
-
-      if (*ip == RE_OPCODE_MATCH)
-      {
-        if (flags & RE_FLAGS_EXHAUSTIVE)
-        {
-          callback(
-            flags & RE_FLAGS_BACKWARDS ? current_input + 1 : input,
-            matches,
-            flags,
-            callback_args);
-          stop = TRUE;
-        }
-        else
-        {
-          return matches;
-        }
       }
     }
   }
@@ -552,27 +555,13 @@ int _yr_scan_match_callback(
   YR_STRING* string = callback_args->string;
   YR_MATCH* new_match;
 
-  int character_size;
   int result = ERROR_SUCCESS;
   int tidx = callback_args->tidx;
 
   size_t match_offset = match_data - callback_args->data;
 
-  if (flags & RE_FLAGS_WIDE)
-    character_size = 2;
-  else
-    character_size = 1;
-
-  // match_length > 0 means that we have found some backward matching
-  // but backward matching overlaps one character with forward matching,
-  // we decrement match_length here to compensate that overlapping.
-
-  if (match_length > 0)
-    match_length -= character_size;
-
   // total match length is the sum of backward and forward matches.
-
-  match_length = match_length + callback_args->forward_matches;
+  match_length += callback_args->forward_matches;
 
   if (callback_args->full_word)
   {
@@ -719,7 +708,7 @@ int _yr_scan_verify_re_match(
     backward_matches = exec(
         ac_match->backward_code,
         data + offset,
-        offset + 1,
+        offset,
         flags | RE_FLAGS_BACKWARDS | RE_FLAGS_EXHAUSTIVE,
         _yr_scan_match_callback,
         (void*) &callback_args);
@@ -859,6 +848,10 @@ inline int _yr_scan_verify_match(
 {
   YR_STRING* string = ac_match->string;
 
+  #ifdef PROFILING_ENABLED
+  clock_t start = clock();
+  #endif
+
   if (data_size - offset <= 0)
     return ERROR_SUCCESS;
 
@@ -877,6 +870,10 @@ inline int _yr_scan_verify_match(
     FAIL_ON_ERROR(_yr_scan_verify_re_match(
         ac_match, data, data_size, offset, matches_arena));
   }
+
+  #ifdef PROFILING_ENABLED
+  string->clock_ticks += clock() - start;
+  #endif
 
   return ERROR_SUCCESS;
 }
@@ -1019,6 +1016,44 @@ void _yr_rules_clean_matches(
 }
 
 
+#ifdef PROFILING_ENABLED
+void yr_rules_print_profiling_info(
+    YR_RULES* rules)
+{
+  YR_RULE* rule;
+  YR_STRING* string;
+
+  clock_t clock_ticks;
+
+  printf("===== PROFILING_ENABLED INFORMATION =====\n");
+
+  rule = rules->rules_list_head;
+
+  while (!RULE_IS_NULL(rule))
+  {
+    clock_ticks = rule->clock_ticks;
+    string = rule->strings;
+
+    while (!STRING_IS_NULL(string))
+    {
+      clock_ticks += string->clock_ticks;
+      string++;
+    }
+
+    printf(
+        "%s:%s: %li\n",
+        rule->ns->name,
+        rule->identifier,
+        clock_ticks);
+
+    rule++;
+  }
+
+  printf("================================\n");
+}
+#endif
+
+
 int yr_rules_scan_mem_block(
     YR_RULES* rules,
     uint8_t* data,
@@ -1118,6 +1153,9 @@ int yr_rules_scan_mem_blocks(
   int message;
   int tidx = 0;
   int result = ERROR_SUCCESS;
+
+  if (block == NULL)
+    return ERROR_SUCCESS;
 
   context.file_size = block->size;
   context.mem_block = block;

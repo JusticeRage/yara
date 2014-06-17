@@ -51,6 +51,7 @@ int yr_compiler_create(
   new_compiler->current_rule_flags = 0;
   new_compiler->allow_includes = 1;
   new_compiler->loop_depth = 0;
+  new_compiler->loop_for_of_mem_offset = -1;
   new_compiler->compiled_rules_arena = NULL;
   new_compiler->externals_count = 0;
   new_compiler->namespaces_count = 0;
@@ -58,31 +59,31 @@ int yr_compiler_create(
   result = yr_hash_table_create(10007, &new_compiler->rules_table);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->sz_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->sz_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->rules_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->rules_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->strings_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->strings_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->code_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->code_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->re_code_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->re_code_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->automaton_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->automaton_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->externals_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->externals_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->namespaces_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->namespaces_arena);
 
   if (result == ERROR_SUCCESS)
-    result = yr_arena_create(1024, 0, &new_compiler->metas_arena);
+    result = yr_arena_create(65536, 0, &new_compiler->metas_arena);
 
   if (result == ERROR_SUCCESS)
     result = yr_ac_create_automaton(
@@ -757,6 +758,11 @@ char* yr_compiler_get_error_message(
       snprintf(buffer,
           buffer_size,
           "loop nesting limit exceeded");
+      break;
+    case ERROR_NESTED_FOR_OF_LOOP:
+      snprintf(buffer,
+          buffer_size,
+          "'for <quantifier> of <string set>' loops can't be nested");
       break;
     case ERROR_INTERNAL_FATAL_ERROR:
       snprintf(

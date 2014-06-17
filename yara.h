@@ -1,4 +1,4 @@
-/*
+  /*
 Copyright (c) 2007-2013. The YARA Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,8 @@ limitations under the License.
 #include <stdio.h>
 #include <stdint.h>
 #include <setjmp.h>
+
+//#define PROFILING_ENABLED
 
 #ifdef WIN32
 #include <windows.h>
@@ -88,7 +90,7 @@ typedef int32_t tidx_mask_t;
 #define ERROR_INVALID_ARGUMENT                  29
 #define ERROR_TOO_MANY_MATCHES                  30
 #define ERROR_INTERNAL_FATAL_ERROR              31
-
+#define ERROR_NESTED_FOR_OF_LOOP                32
 
 #define CALLBACK_MSG_RULE_MATCHING              1
 #define CALLBACK_MSG_RULE_NOT_MATCHING          2
@@ -374,6 +376,10 @@ typedef struct _YR_STRING
   YR_MATCHES matches[MAX_THREADS];
   YR_MATCHES unconfirmed_matches[MAX_THREADS];
 
+  #ifdef PROFILING_ENABLED
+  uint64_t clock_ticks;
+  #endif
+
 } YR_STRING;
 
 
@@ -387,6 +393,10 @@ typedef struct _YR_RULE
   DECLARE_REFERENCE(YR_META*, metas);
   DECLARE_REFERENCE(YR_STRING*, strings);
   DECLARE_REFERENCE(YR_NAMESPACE*, ns);
+
+  #ifdef PROFILING_ENABLED
+  uint64_t clock_ticks;
+  #endif
 
 } YR_RULE;
 
@@ -487,10 +497,7 @@ typedef struct _YR_HASH_TABLE_ENTRY
 
 } YR_HASH_TABLE_ENTRY;
 
-#if _MSC_VER && !__INTEL_COMPILER
- #pragma warning( push )
- #pragma warning( disable : 4200 )
-#endif
+
 typedef struct _YR_HASH_TABLE
 {
   int size;
@@ -498,9 +505,6 @@ typedef struct _YR_HASH_TABLE
   YR_HASH_TABLE_ENTRY* buckets[0];
 
 } YR_HASH_TABLE;
-#if _MSC_VER && !__INTEL_COMPILER
- #pragma warning( pop )
-#endif
 
 
 typedef struct _YR_ATOM_LIST_ITEM
@@ -569,6 +573,7 @@ typedef struct _YR_COMPILER
   int8_t*             loop_address[MAX_LOOP_NESTING];
   char*               loop_identifier[MAX_LOOP_NESTING];
   int                 loop_depth;
+  int                 loop_for_of_mem_offset;
 
   int                 allow_includes;
 
@@ -617,10 +622,6 @@ typedef struct _YR_RULES {
 
 extern char lowercase[256];
 extern char altercase[256];
-
-#if defined (__cplusplus)
-extern "C" {
-#endif
 
 void yr_initialize(void);
 
@@ -700,13 +701,13 @@ int yr_compiler_get_rules(
 
 
 int yr_rules_scan_mem(
-	YR_RULES* rules,
-	uint8_t* buffer,
-	size_t buffer_size,
-	YR_CALLBACK_FUNC callback,
-	void* user_data,
-	int fast_scan_mode,
-	int timeout);
+    YR_RULES* rules,
+    uint8_t* buffer,
+    size_t buffer_size,
+    YR_CALLBACK_FUNC callback,
+    void* user_data,
+    int fast_scan_mode,
+    int timeout);
 
 
 int yr_rules_scan_file(
@@ -758,8 +759,9 @@ int yr_rules_define_string_variable(
     const char* identifier,
     const char* value);
 
+
+void yr_rules_print_profiling_info(
+    YR_RULES* rules);
+
 #endif
 
-#if defined (__cplusplus)
-}
-#endif
