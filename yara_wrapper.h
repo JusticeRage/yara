@@ -27,6 +27,8 @@
 #include <map>
 #include <exception>
 
+#include <stdlib.h>
+
 #include <boost/shared_ptr.hpp>
 #include <boost/cstdint.hpp>
 #include <boost/filesystem.hpp>
@@ -124,11 +126,11 @@ public:
 	/**
 	 *	@brief	Tries to match a given input with the currently loaded Yara rules.
 	 *
-	 *	@param	std::vector<boost::uint8_t>& bytes The bytes to scan.
+	 *	@param	const std::vector<boost::uint8_t>& bytes The bytes to scan.
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_bytes(std::vector<boost::uint8_t>& bytes);
+	Y_DECLSPEC const_matches scan_bytes(const std::vector<boost::uint8_t>& bytes);
 
 	/**
 	 *	@brief	Tries to match an input file with the currently loaded Yara rules.

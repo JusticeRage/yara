@@ -152,7 +152,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_bytes(std::vector<boost::uint8_t>& bytes)
+const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 {
 	matches res = matches(new match_vector());
 	int retval;
@@ -164,14 +164,18 @@ const_matches Yara::scan_bytes(std::vector<boost::uint8_t>& bytes)
 		return res;
 	}
 
+	// Make a copy of the input buffer, because we can't be sure that Yara will not modify it
+	// and the constness of the input has to be enforced.
+	std::vector<boost::uint8_t> copy(bytes.begin(), bytes.end());
+
 	// Yara setup done. Scan the file.
 	retval = yr_rules_scan_mem(_rules,
-							   &bytes[0],				// The bytes to scan
-							   bytes.size(),			// Number of bytes
+							   &copy[0],		// The bytes to scan
+							   bytes.size(),	// Number of bytes
 							   get_match_data,
-							   &res,					// The vector to fill
-							   FALSE,					// We don't want a fast scan.
-							   0);						// No timeout)
+							   &res,			// The vector to fill
+							   FALSE,			// We don't want a fast scan.
+							   0);				// No timeout)
 
 	if (retval != ERROR_SUCCESS)
 	{
