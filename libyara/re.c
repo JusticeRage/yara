@@ -1345,6 +1345,7 @@ void _yr_re_fiber_sync(
 //      RE_FLAGS_BACKWARDS
 //      RE_FLAGS_EXHAUSTIVE
 //      RE_FLAGS_WIDE
+//      RE_FLAGS_NOT_AT_START
 //   RE_MATCH_CALLBACK_FUNC callback  - Callback function
 //   void* callback_args              - Callback argument
 //
@@ -1541,7 +1542,7 @@ int yr_re_exec(
           if (flags & RE_FLAGS_BACKWARDS)
             kill = (input_size > count);
           else
-            kill = (count != 0);
+            kill = (flags & RE_FLAGS_NOT_AT_START) || (count != 0);
           action = kill ? ACTION_KILL : ACTION_CONTINUE;
           break;
 

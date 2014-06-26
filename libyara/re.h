@@ -70,6 +70,7 @@ limitations under the License.
 #define RE_FLAGS_NO_CASE                  0x20
 #define RE_FLAGS_SCAN                     0x40
 #define RE_FLAGS_DOT_ALL                  0x80
+#define RE_FLAGS_NOT_AT_START             0x100
 
 
 typedef struct RE RE;
