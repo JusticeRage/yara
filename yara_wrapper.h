@@ -26,6 +26,7 @@
 #include <set>
 #include <map>
 #include <exception>
+#include <algorithm>
 
 #include <stdlib.h>
 

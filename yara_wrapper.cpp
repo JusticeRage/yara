@@ -244,15 +244,19 @@ int get_match_data(int message, YR_RULE* rule, void* data)
 					while (match != NULL)
 					{
 						std::stringstream ss;
-						if (!STRING_IS_HEX(s)) {
-							m->add_found_string(std::string((char*) match->data, match->length));
+						if (!STRING_IS_HEX(s))
+						{
+							std::string found((char*) match->data, match->length);
+							// Yara inserts null bytes when it matches unicode strings. Dirty fix to remove them all.
+							found.erase(std::remove(found.begin(), found.end(), '\0'), found.end());
+							m->add_found_string(found);
 						}
 						else
 						{
 							std::stringstream ss;
 							ss << std::hex;
 							for (int i = 0; i < std::min(20, match->length); i++) {
-								ss << static_cast<unsigned int>(match->data[i]); // Don't interpret as a char
+								ss << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
 							}
 							if (match->length > 20) {
 								ss << "...";
