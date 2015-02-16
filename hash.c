@@ -17,8 +17,9 @@ limitations under the License.
 #include <stdint.h>
 #include <string.h>
 
-#include "hash.h"
-#include "mem.h"
+#include <yara/hash.h>
+#include <yara/mem.h>
+#include <yara/error.h>
 
 #define ROTATE_INT32(x, shift) \
     ((x << (shift % 32)) | (x >> (32 - (shift % 32))))
@@ -92,7 +93,7 @@ int yr_hash_table_create(
   YR_HASH_TABLE* new_table;
   int i;
 
-  new_table = yr_malloc(
+  new_table = (YR_HASH_TABLE*) yr_malloc(
       sizeof(YR_HASH_TABLE) + size * sizeof(YR_HASH_TABLE_ENTRY*));
 
   if (new_table == NULL)
@@ -109,24 +110,32 @@ int yr_hash_table_create(
 }
 
 void yr_hash_table_destroy(
-    YR_HASH_TABLE* table)
+    YR_HASH_TABLE* table,
+    YR_HASH_TABLE_FREE_VALUE_FUNC free_value)
 {
   YR_HASH_TABLE_ENTRY* entry;
   YR_HASH_TABLE_ENTRY* next_entry;
 
-  int i;
+  if (table == NULL)
+    return;
 
-  for (i = 0; i < table->size; i++)
+  for (int i = 0; i < table->size; i++)
   {
     entry = table->buckets[i];
 
     while (entry != NULL)
     {
       next_entry = entry->next;
+
+      if (free_value != NULL)
+        free_value(entry->value);
+
       if (entry->ns != NULL)
         yr_free(entry->ns);
+
       yr_free(entry->key);
       yr_free(entry);
+
       entry = next_entry;
     }
   }
@@ -219,5 +228,3 @@ int yr_hash_table_add(
 
   return ERROR_SUCCESS;
 }
-
-

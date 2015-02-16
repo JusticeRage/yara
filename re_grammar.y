@@ -18,30 +18,20 @@ limitations under the License.
 
 #include <stdint.h>
 
-#include "mem.h"
-#include "re_lexer.h"
-#include "re.h"
+#include <yara/utils.h>
+#include <yara/error.h>
+#include <yara/limits.h>
+#include <yara/mem.h>
+#include <yara/re.h>
+#include <yara/re_lexer.h>
 
-#include "config.h"
-
-#ifdef DMALLOC
-#include <dmalloc.h>
-#endif
 
 #define YYERROR_VERBOSE
-
-
-#define YYDEBUG 0
-
-#if YYDEBUG
-yydebug = 1;
-#endif
 
 #define ERROR_IF(x, error) \
     if (x) \
     { \
-      RE* re = yyget_extra(yyscanner); \
-      re->error_code = error; \
+      lex_env->last_error_code = error; \
       YYABORT; \
     } \
 
@@ -59,10 +49,10 @@ yydebug = 1;
 %pure-parser
 
 %parse-param {void *yyscanner}
-%parse-param {LEX_ENVIRONMENT *lex_env}
+%parse-param {RE_LEX_ENVIRONMENT *lex_env}
 
 %lex-param {yyscan_t yyscanner}
-%lex-param {LEX_ENVIRONMENT *lex_env}
+%lex-param {RE_LEX_ENVIRONMENT *lex_env}
 
 %union {
   int integer;
@@ -82,6 +72,8 @@ yydebug = 1;
 %token _NON_SPACE_
 %token _DIGIT_
 %token _NON_DIGIT_
+%token _WORD_BOUNDARY_
+%token _NON_WORD_BOUNDARY_
 
 %type <re_node>  alternative concatenation repeat single
 
@@ -210,6 +202,18 @@ repeat : single '*'
          {
             $$ = $1;
          }
+       | _WORD_BOUNDARY_
+         {
+            $$ = yr_re_node_create(RE_NODE_WORD_BOUNDARY, NULL, NULL);
+
+            ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+         }
+       | _NON_WORD_BOUNDARY_
+         {
+            $$ = yr_re_node_create(RE_NODE_NON_WORD_BOUNDARY, NULL, NULL);
+
+            ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+         }
        | '^'
          {
             $$ = yr_re_node_create(RE_NODE_ANCHOR_START, NULL, NULL);
@@ -290,19 +294,3 @@ single : '(' alternative ')'
 
 
 %%
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

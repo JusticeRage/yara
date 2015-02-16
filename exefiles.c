@@ -16,15 +16,9 @@ limitations under the License.
 
 #include <limits.h>
 
-#ifdef WIN32
-#include <windows.h>
-#else
-#include "pe.h"
-#endif
-
-#include "elf.h"
-#include "exec.h"
-
+#include <yara/pe.h>
+#include <yara/elf.h>
+#include <yara/exec.h>
 
 #ifndef NULL
 #define NULL 0
@@ -35,12 +29,12 @@ limitations under the License.
 #endif
 
 
-PIMAGE_NT_HEADERS yr_get_pe_header(
+PIMAGE_NT_HEADERS32 yr_get_pe_header(
     uint8_t* buffer,
     size_t buffer_length)
 {
   PIMAGE_DOS_HEADER mz_header;
-  PIMAGE_NT_HEADERS pe_header;
+  PIMAGE_NT_HEADERS32 pe_header;
 
   size_t headers_size = 0;
 
@@ -62,7 +56,7 @@ PIMAGE_NT_HEADERS yr_get_pe_header(
   if (buffer_length < headers_size)
     return NULL;
 
-  pe_header = (PIMAGE_NT_HEADERS) (buffer + mz_header->e_lfanew);
+  pe_header = (PIMAGE_NT_HEADERS32) (buffer + mz_header->e_lfanew);
 
   headers_size += pe_header->FileHeader.SizeOfOptionalHeader;
 
@@ -81,7 +75,7 @@ PIMAGE_NT_HEADERS yr_get_pe_header(
 
 
 uint64_t yr_pe_rva_to_offset(
-    PIMAGE_NT_HEADERS pe_header,
+    PIMAGE_NT_HEADERS32 pe_header,
     uint64_t rva,
     size_t buffer_length)
 {
@@ -242,7 +236,7 @@ uint64_t yr_get_entry_point_offset(
     uint8_t* buffer,
     size_t buffer_length)
 {
-  PIMAGE_NT_HEADERS pe_header;
+  PIMAGE_NT_HEADERS32 pe_header;
   elf32_header_t* elf_header32;
   elf64_header_t* elf_header64;
 
@@ -282,7 +276,7 @@ uint64_t yr_get_entry_point_address(
     size_t buffer_length,
     size_t base_address)
 {
-  PIMAGE_NT_HEADERS pe_header;
+  PIMAGE_NT_HEADERS32 pe_header;
 
   elf32_header_t* elf_header32;
   elf64_header_t* elf_header64;
@@ -318,24 +312,3 @@ uint64_t yr_get_entry_point_address(
 
   return UNDEFINED;
 }
-
-
-int yr_file_is_pe(
-    uint8_t* buffer,
-    size_t buffer_length)
-{
-  return (yr_get_pe_header(buffer, buffer_length) != NULL);
-}
-
-
-int yr_file_is_elf(
-    uint8_t* buffer,
-    size_t buffer_length)
-{
-  int type = yr_get_elf_type(buffer, buffer_length);
-
-  return (type == ELF_CLASS_32 || type == ELF_CLASS_64);
-}
-
-
-

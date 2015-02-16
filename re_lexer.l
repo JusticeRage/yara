@@ -19,23 +19,19 @@ limitations under the License.
 %{
 
 #include <assert.h>
-
-#include "yara.h"
-#include "atoms.h"
-#include "mem.h"
-#include "re.h"
-#include "re_grammar.h"
-#include "re_lexer.h"
-#include "utils.h"
-
-#include "config.h"
-
-#ifdef DMALLOC
-#include <dmalloc.h>
-#endif
+#include <setjmp.h>
 
 
-#ifdef WIN32
+#include <yara/utils.h>
+#include <yara/error.h>
+#include <yara/limits.h>
+#include <yara/mem.h>
+#include <yara/re.h>
+#include <yara/re_lexer.h>
+#include <yara/strutils.h>
+
+
+#ifdef _WIN32
 #define snprintf _snprintf
 #endif
 
@@ -49,6 +45,7 @@ uint8_t read_escaped_char(yyscan_t yyscanner);
 %option noyywrap
 %option nounistd
 %option nounput
+%option never-interactive
 %option yylineno
 %option prefix="re_yy"
 
@@ -200,6 +197,15 @@ hex_digit     [0-9a-fA-F]
 }
 
 
+\\b {
+  return _WORD_BOUNDARY_;
+}
+
+\\B {
+  return _NON_WORD_BOUNDARY_;
+}
+
+
 \\{digit}+ {
 
   yyerror(yyscanner, lex_env, "backreferences are not allowed");
@@ -217,14 +223,12 @@ hex_digit     [0-9a-fA-F]
 
   // End of character class.
 
-  int i;
-
-  yylval->class_vector = yr_malloc(32);
+  yylval->class_vector = (uint8_t*) yr_malloc(32);
   memcpy(yylval->class_vector, LEX_ENV->class_vector, 32);
 
   if (LEX_ENV->negated_class)
   {
-    for(i = 0; i < 32; i++)
+    for(int i = 0; i < 32; i++)
       yylval->class_vector[i] = ~yylval->class_vector[i];
   }
 
@@ -239,8 +243,6 @@ hex_digit     [0-9a-fA-F]
   // A range inside a character class.
   //  [abc0-9]
   //      ^- matching here
-
-  int c;
 
   uint8_t start = yytext[0];
   uint8_t end = yytext[2];
@@ -264,7 +266,7 @@ hex_digit     [0-9a-fA-F]
     yyterminate();
   }
 
-  for (c = start; c <= end; c++)
+  for (int c = start; c <= end; c++)
   {
     LEX_ENV->class_vector[c / 8] |= 1 << c % 8;
   }
@@ -273,26 +275,24 @@ hex_digit     [0-9a-fA-F]
 
 <char_class>\\w {
 
-  int i;
   char word_chars[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x03,
                         0xFE, 0xFF, 0xFF, 0x87, 0xFE, 0xFF, 0xFF, 0x07,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-  for (i = 0; i < 32; i++)
+  for (int i = 0; i < 32; i++)
     LEX_ENV->class_vector[i] |= word_chars[i];
 }
 
 
 <char_class>\\W {
 
-  int i;
   char word_chars[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x03,
                         0xFE, 0xFF, 0xFF, 0x87, 0xFE, 0xFF, 0xFF, 0x07,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
-  for (i = 0; i < 32; i++)
+  for (int i = 0; i < 32; i++)
     LEX_ENV->class_vector[i] |= ~word_chars[i];
 }
 
@@ -306,35 +306,40 @@ hex_digit     [0-9a-fA-F]
 
 <char_class>\\S {
 
-  int i;
-
-  for (i = 0; i < 32; i++)
-    LEX_ENV->class_vector[i] = 0xFF;
-
-  LEX_ENV->class_vector[' ' / 8] &= ~(1 << ' ' % 8);
-  LEX_ENV->class_vector['\t' / 8] &= ~(1 << '\t' % 8);
+  for (int i = 0; i < 32; i++)
+  {
+    if (i == ' ' / 8)
+      LEX_ENV->class_vector[i] |= ~(1 << ' ' % 8);
+    else if (i == '\t' / 8)
+      LEX_ENV->class_vector[i] |= ~(1 << '\t' % 8);
+    else
+      LEX_ENV->class_vector[i] = 0xFF;
+  }
 }
 
 
 <char_class>\\d {
 
-  char c;
-
-  for (c = '0'; c <= '9'; c++)
+  for (char c = '0'; c <= '9'; c++)
     LEX_ENV->class_vector[c / 8] |= 1 << c % 8;
 }
 
 
 <char_class>\\D {
 
-  int i;
-  char c;
+  for (int i = 0; i < 32; i++)
+  {
+    // digits 0-7 are in the sixth byte of the vector, let that byte alone
+    if (i == 6)
+      continue;
 
-  for (i = 0; i < 32; i++)
-    LEX_ENV->class_vector[i] = 0xFF;
-
-  for (c = '0'; c <= '9'; c++)
-    LEX_ENV->class_vector[c / 8] &= ~(1 << c % 8);
+    // digits 8 and 9 are the lowest two bits in the senventh byte of the
+    // vector, let those bits alone.
+    if (i == 7)
+      LEX_ENV->class_vector[i] |= 0xFC;
+    else
+      LEX_ENV->class_vector[i] = 0xFF;
+  }
 }
 
 
@@ -441,12 +446,22 @@ uint8_t read_escaped_char(yyscan_t yyscanner)
   char text[4];
 
   text[0] = '\\';
+
+  #ifdef __cplusplus
+  text[1] = yyinput(yyscanner);
+  #else
   text[1] = input(yyscanner);
+  #endif
 
   if (text[1] == 'x')
   {
+    #ifdef __cplusplus
+    text[2] = yyinput(yyscanner);
+    text[3] = yyinput(yyscanner);
+    #else
     text[2] = input(yyscanner);
     text[3] = input(yyscanner);
+    #endif
   }
 
   return escaped_char_value(text);
@@ -454,12 +469,13 @@ uint8_t read_escaped_char(yyscan_t yyscanner)
 
 
 
-#ifdef WIN32
+#ifdef _WIN32
+#include <windows.h>
 extern DWORD recovery_state_key;
 #else
+#include <pthread.h>
 extern pthread_key_t recovery_state_key;
 #endif
-
 
 void yyfatal(
     yyscan_t yyscanner,
@@ -467,10 +483,10 @@ void yyfatal(
 {
   jmp_buf* recovery_state;
 
-  #ifdef WIN32
-  recovery_state = TlsGetValue(recovery_state_key) ;
+  #ifdef _WIN32
+  recovery_state = (jmp_buf*) TlsGetValue(recovery_state_key) ;
   #else
-  recovery_state = pthread_getspecific(recovery_state_key);
+  recovery_state = (jmp_buf*) pthread_getspecific(recovery_state_key);
   #endif
 
   longjmp(*recovery_state, 1);
@@ -479,29 +495,39 @@ void yyfatal(
 
 void yyerror(
     yyscan_t yyscanner,
-    LEX_ENVIRONMENT* lex_env,
+    RE_LEX_ENVIRONMENT* lex_env,
     const char *error_message)
 {
-  if (lex_env->last_error_message == NULL)
+  // if lex_env->last_error_code was set to some error code before
+  // don't overwrite it, we are interested in the first error, not in
+  // subsequent errors like "syntax error, unexpected $end" caused by
+  // early parser termination.
+
+  if (lex_env->last_error_code == ERROR_SUCCESS)
   {
-    lex_env->last_error_message = yr_strdup(error_message);
+    lex_env->last_error_code = ERROR_INVALID_REGULAR_EXPRESSION;
+
+    strlcpy(
+        lex_env->last_error_message,
+        error_message,
+        sizeof(lex_env->last_error_message));
   }
 }
 
 
 int yr_parse_re_string(
   const char* re_string,
-  RE** re)
+  int flags,
+  RE** re,
+  RE_ERROR* error)
 {
   yyscan_t yyscanner;
   jmp_buf recovery_state;
-  LEX_ENVIRONMENT lex_env;
+  RE_LEX_ENVIRONMENT lex_env;
 
-  lex_env.last_error_message = NULL;
+  lex_env.last_error_code = ERROR_SUCCESS;
 
-  FAIL_ON_ERROR(yr_re_create(re));
-
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsSetValue(recovery_state_key, (LPVOID) &recovery_state);
   #else
   pthread_setspecific(recovery_state_key, (void*) &recovery_state);
@@ -510,23 +536,28 @@ int yr_parse_re_string(
   if (setjmp(recovery_state) != 0)
     return ERROR_INTERNAL_FATAL_ERROR;
 
+  FAIL_ON_ERROR(yr_re_create(re));
+
+  (*re)->flags = flags;
+
   yylex_init(&yyscanner);
   yyset_extra(*re, yyscanner);
   yy_scan_string(re_string, yyscanner);
   yyparse(yyscanner, &lex_env);
   yylex_destroy(yyscanner);
 
-  if (lex_env.last_error_message != NULL)
+  if (lex_env.last_error_code != ERROR_SUCCESS)
   {
-    (*re)->error_message = lex_env.last_error_message;
-    return ERROR_INVALID_REGULAR_EXPRESSION;
+    yr_re_destroy(*re);
+    *re = NULL;
+
+    strlcpy(
+        error->message,
+        lex_env.last_error_message,
+        sizeof(error->message));
+
+    return lex_env.last_error_code;
   }
 
-  return (*re)->error_code;
+  return ERROR_SUCCESS;
 }
-
-
-
-
-
-

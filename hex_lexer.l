@@ -18,21 +18,19 @@ limitations under the License.
 
 %{
 
-#include "yara.h"
-#include "atoms.h"
-#include "mem.h"
-#include "re.h"
+
+#include <setjmp.h>
+
+#include <yara/limits.h>
+#include <yara/error.h>
+#include <yara/mem.h>
+#include <yara/re.h>
+#include <yara/strutils.h>
+#include <yara/hex_lexer.h>
+
 #include "hex_grammar.h"
-#include "hex_lexer.h"
-#include "utils.h"
 
-#include "config.h"
-
-#ifdef DMALLOC
-#include <dmalloc.h>
-#endif
-
-#ifdef WIN32
+#ifdef _WIN32
 #define snprintf _snprintf
 #endif
 
@@ -51,6 +49,7 @@ limitations under the License.
 %option nounistd
 %option noinput
 %option nounput
+%option never-interactive
 %option yylineno
 %option prefix="hex_yy"
 
@@ -140,9 +139,11 @@ hexdigit      [a-fA-F0-9]
 %%
 
 
-#ifdef WIN32
+#ifdef _WIN32
+#include <windows.h>
 extern DWORD recovery_state_key;
 #else
+#include <pthread.h>
 extern pthread_key_t recovery_state_key;
 #endif
 
@@ -153,10 +154,10 @@ void yyfatal(
 {
   jmp_buf* recovery_state;
 
-  #ifdef WIN32
-  recovery_state = TlsGetValue(recovery_state_key) ;
+  #ifdef _WIN32
+  recovery_state = (jmp_buf*) TlsGetValue(recovery_state_key) ;
   #else
-  recovery_state = pthread_getspecific(recovery_state_key);
+  recovery_state = (jmp_buf*) pthread_getspecific(recovery_state_key);
   #endif
 
   longjmp(*recovery_state, 1);
@@ -164,38 +165,41 @@ void yyfatal(
 
 void yyerror(
     yyscan_t yyscanner,
-    LEX_ENVIRONMENT* lex_env,
+    HEX_LEX_ENVIRONMENT* lex_env,
     const char *error_message)
 {
-  if (lex_env->last_error_message == NULL)
+  // if lex_env->last_error_code was set to some error code before
+  // don't overwrite it, we are interested in the first error, not in
+  // subsequent errors like "syntax error, unexpected $end" caused by
+  // early parser termination.
+
+  if (lex_env->last_error_code == ERROR_SUCCESS)
   {
-    lex_env->last_error_message = yr_strdup(error_message);
+    lex_env->last_error_code = ERROR_INVALID_HEX_STRING;
+
+    strlcpy(
+        lex_env->last_error_message,
+        error_message,
+        sizeof(lex_env->last_error_message));
   }
 }
 
+
 int yr_parse_hex_string(
   const char* hex_string,
-  RE** re)
+  int flags,
+  RE** re,
+  RE_ERROR* error)
 {
   yyscan_t yyscanner;
   jmp_buf recovery_state;
-  LEX_ENVIRONMENT lex_env;
+  HEX_LEX_ENVIRONMENT lex_env;
 
-  lex_env.last_error_message = NULL;
+  lex_env.last_error_code = ERROR_SUCCESS;
   lex_env.inside_or = 0;
+  lex_env.token_count = 0;
 
-  FAIL_ON_ERROR(yr_re_create(re));
-
-  // The RE_FLAGS_FAST_HEX_REGEXP flag indicates a regular expression derived
-  // from a hex string that can be matched by faster algorithm. These regular
-  // expressions come from hex strings not contaning alternatives
-  // (like in 01 02 | 03 04).
-  //
-  // This flag is unset later during parsing if necessary.
-
-  (*re)->flags |= RE_FLAGS_FAST_HEX_REGEXP;
-
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsSetValue(recovery_state_key, (LPVOID) &recovery_state);
   #else
   pthread_setspecific(recovery_state_key, (void*) &recovery_state);
@@ -204,21 +208,33 @@ int yr_parse_hex_string(
   if (setjmp(recovery_state) != 0)
     return ERROR_INTERNAL_FATAL_ERROR;
 
+  FAIL_ON_ERROR(yr_re_create(re));
+
+  // The RE_FLAGS_FAST_HEX_REGEXP flag indicates a regular expression derived
+  // from a hex string that can be matched by faster algorithm. These regular
+  // expressions come from hex strings not contaning alternatives, like in:
+  // { ( 01 02 | 03 04) 05 06 }.
+  //
+  // This flag is unset later during parsing if alternatives are used.
+
+  (*re)->flags |= RE_FLAGS_FAST_HEX_REGEXP;
+
+  // Set RE_FLAGS_DOT_ALL because in hex strings the "dot" (?? in this case)
+  // must match all characters including new-line.
+
+  (*re)->flags |= RE_FLAGS_DOT_ALL;
+
   yylex_init(&yyscanner);
   yyset_extra(*re, yyscanner);
   yy_scan_string(hex_string, yyscanner);
   yyparse(yyscanner, &lex_env);
   yylex_destroy(yyscanner);
 
-  if (lex_env.last_error_message != NULL)
+  if (lex_env.last_error_code != ERROR_SUCCESS)
   {
-    (*re)->error_message = lex_env.last_error_message;
-    return ERROR_INVALID_HEX_STRING;
+    strlcpy(error->message, lex_env.last_error_message, sizeof(error->message));
+    return lex_env.last_error_code;
   }
 
-  return (*re)->error_code;
+  return ERROR_SUCCESS;
 }
-
-
-
-

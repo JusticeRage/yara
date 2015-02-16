@@ -26,20 +26,23 @@ order to avoid confusion with operating system threads.
 */
 
 #include <assert.h>
-#include <ctype.h>
 #include <string.h>
 #include <limits.h>
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <windows.h>
 #else
 #include <pthread.h>
 #endif
 
-#include "yara.h"
-#include "arena.h"
-#include "mem.h"
-#include "re.h"
+#include <yara/limits.h>
+#include <yara/globals.h>
+#include <yara/utils.h>
+#include <yara/mem.h>
+#include <yara/re.h>
+#include <yara/error.h>
+#include <yara/re_lexer.h>
+#include <yara/hex_lexer.h>
 
 
 #define RE_MAX_STACK      1024  // Maxium stack size for regexp evaluation
@@ -47,20 +50,18 @@ order to avoid confusion with operating system threads.
 #define RE_SCAN_LIMIT     4096  // Maximum input size scanned by yr_re_exec
 
 
-#define EMIT_BACKWARDS                1
-#define DONT_UPDATE_FORWARDS_CODE     2
-#define DONT_UPDATE_BACKWARDS_CODE    4
-
-
-#ifndef min
-#define min(x, y)  ((x < y) ? (x) : (y))
-#endif
+#define EMIT_BACKWARDS                  0x01
+#define EMIT_DONT_SET_FORWARDS_CODE     0x02
+#define EMIT_DONT_SET_BACKWARDS_CODE    0x04
+#define EMIT_NO_CASE                    0x08
+#define EMIT_DOT_ALL                    0x10
 
 
 typedef struct _RE_FIBER
 {
-  uint8_t* ip;
+  RE_CODE  ip;
   int32_t  sp;
+
   uint16_t stack[RE_MAX_STACK];
 
   struct _RE_FIBER* prev;
@@ -84,22 +85,11 @@ typedef struct _RE_THREAD_STORAGE
 } RE_THREAD_STORAGE;
 
 
-#ifdef WIN32
-DWORD thread_storage_key;
+#ifdef _WIN32
+DWORD thread_storage_key = 0;
 #else
-pthread_key_t thread_storage_key;
+pthread_key_t thread_storage_key = 0;
 #endif
-
-
-extern int yr_parse_re_string(
-  const char* re_string,
-  RE** re);
-
-
-extern int yr_parse_hex_string(
-  const char* hex_string,
-  RE** re);
-
 
 //
 // yr_re_initialize
@@ -108,9 +98,9 @@ extern int yr_parse_hex_string(
 // function from this module.
 //
 
-int yr_re_initialize()
+int yr_re_initialize(void)
 {
-  #ifdef WIN32
+  #ifdef _WIN32
   thread_storage_key = TlsAlloc();
   #else
   pthread_key_create(&thread_storage_key, NULL);
@@ -126,14 +116,15 @@ int yr_re_initialize()
 // stopped using functions from this module.
 //
 
-int yr_re_finalize()
+int yr_re_finalize(void)
 {
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsFree(thread_storage_key);
   #else
   pthread_key_delete(thread_storage_key);
   #endif
 
+  thread_storage_key = 0;
   return ERROR_SUCCESS;
 }
 
@@ -144,17 +135,20 @@ int yr_re_finalize()
 // before exiting.
 //
 
-int yr_re_finalize_thread()
+int yr_re_finalize_thread(void)
 {
   RE_FIBER* fiber;
   RE_FIBER* next_fiber;
   RE_THREAD_STORAGE* storage;
 
-  #ifdef WIN32
-  storage = TlsGetValue(thread_storage_key);
-  #else
-  storage = pthread_getspecific(thread_storage_key);
-  #endif
+  if (thread_storage_key != 0)
+    #ifdef _WIN32
+    storage = (RE_THREAD_STORAGE*) TlsGetValue(thread_storage_key);
+    #else
+    storage = (RE_THREAD_STORAGE*) pthread_getspecific(thread_storage_key);
+    #endif
+  else
+    return ERROR_SUCCESS;
 
   if (storage != NULL)
   {
@@ -170,7 +164,7 @@ int yr_re_finalize_thread()
     yr_free(storage);
   }
 
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsSetValue(thread_storage_key, NULL);
   #else
   pthread_setspecific(thread_storage_key, NULL);
@@ -185,7 +179,7 @@ RE_NODE* yr_re_node_create(
     RE_NODE* left,
     RE_NODE* right)
 {
-  RE_NODE* result = yr_malloc(sizeof(RE_NODE));
+  RE_NODE* result = (RE_NODE*) yr_malloc(sizeof(RE_NODE));
 
   if (result != NULL)
   {
@@ -202,7 +196,7 @@ RE_NODE* yr_re_node_create(
 
 
 void yr_re_node_destroy(
-  RE_NODE* node)
+    RE_NODE* node)
 {
   if (node->left != NULL)
     yr_re_node_destroy(node->left);
@@ -227,40 +221,136 @@ int yr_re_create(
 
   (*re)->flags = 0;
   (*re)->root_node = NULL;
-  (*re)->error_message = NULL;
-  (*re)->error_code = ERROR_SUCCESS;
+  (*re)->code_arena = NULL;
+  (*re)->code = NULL;
 
   return ERROR_SUCCESS;
 }
 
 
 void yr_re_destroy(
-  RE* re)
+    RE* re)
 {
   if (re->root_node != NULL)
     yr_re_node_destroy(re->root_node);
 
-  if (re->error_message != NULL)
-    yr_free((char*) re->error_message);
+  if (re->code_arena != NULL)
+    yr_arena_destroy(re->code_arena);
 
   yr_free(re);
 }
 
 
+//
+// yr_re_parse
+//
+// Parses a regexp but don't emit its code. A further call to y
+// yr_re_emit_code is required to get the code.
+//
+
+int yr_re_parse(
+    const char* re_string,
+    int flags,
+    RE** re,
+    RE_ERROR* error)
+{
+  return yr_parse_re_string(re_string, flags, re, error);
+}
+
+
+//
+// yr_re_parse_hex
+//
+// Parses a hex string but don't emit its code. A further call to
+// yr_re_emit_code is required to get the code.
+//
+
+int yr_re_parse_hex(
+    const char* hex_string,
+    int flags,
+    RE** re,
+    RE_ERROR* error)
+{
+  return yr_parse_hex_string(hex_string, flags, re, error);
+}
+
+
+//
+// yr_re_compile
+//
+// Parses the regexp and emit its code to the provided code_arena,
+// if code_arena is NULL the function creates a new arena of its own.
+//
+
 int yr_re_compile(
     const char* re_string,
-    RE** re)
+    int flags,
+    YR_ARENA* code_arena,
+    RE** re,
+    RE_ERROR* error)
 {
-  return yr_parse_re_string(re_string, re);
+  RE* compiled_re;
+  YR_ARENA* arena;
+
+  *re = NULL;
+
+  FAIL_ON_ERROR(yr_re_parse(re_string, flags, &compiled_re, error));
+
+  if (code_arena == NULL)
+  {
+    FAIL_ON_ERROR_WITH_CLEANUP(
+        yr_arena_create(
+            RE_MAX_CODE_SIZE,
+            ARENA_FLAGS_FIXED_SIZE,
+            &arena),
+        yr_re_destroy(compiled_re));
+
+    compiled_re->code_arena = arena;
+  }
+  else
+  {
+    arena = code_arena;
+  }
+
+  FAIL_ON_ERROR_WITH_CLEANUP(
+      yr_re_emit_code(compiled_re, arena),
+      yr_re_destroy(compiled_re));
+
+  *re = compiled_re;
+
+  return ERROR_SUCCESS;
 }
 
 
-int yr_re_compile_hex(
-    const char* hex_string,
-    RE** re)
+//
+// yr_re_match
+//
+// Verifies if the target string matches the pattern
+//
+// Args:
+//    uint8_t* re_code    -  A pointer to regexp code
+//    char* target        -  Target string
+//
+// Returns:
+//    Integer indicating the number of matching bytes, including 0 when
+//    matching an empty regexp. Negative values indicate:
+//      -1  No match
+//      -2  An error ocurred
+
+
+int yr_re_match(
+    RE_CODE re_code,
+    const char* target)
 {
-  return yr_parse_hex_string(hex_string, re);
+  return yr_re_exec(
+      re_code,
+      (uint8_t*) target,
+      strlen(target),
+      RE_FLAGS_SCAN,
+      NULL,
+      NULL);
 }
+
 
 //
 // yr_re_extract_literal
@@ -299,7 +389,7 @@ SIZED_STRING* yr_re_extract_literal(
     node = node->left;
   }
 
-  string = yr_malloc(sizeof(SIZED_STRING) + length);
+  string = (SIZED_STRING*) yr_malloc(sizeof(SIZED_STRING) + length);
 
   if (string == NULL)
     return NULL;
@@ -326,6 +416,29 @@ SIZED_STRING* yr_re_extract_literal(
   }
 
   return string;
+}
+
+
+int _yr_re_node_contains_dot_star(
+    RE_NODE* re_node)
+{
+  if (re_node->type == RE_NODE_STAR && re_node->left->type == RE_NODE_ANY)
+    return TRUE;
+
+  if (re_node->left != NULL && _yr_re_node_contains_dot_star(re_node->left))
+    return TRUE;
+
+  if (re_node->right != NULL && _yr_re_node_contains_dot_star(re_node->right))
+    return TRUE;
+
+  return FALSE;
+}
+
+
+int yr_re_contains_dot_star(
+    RE* re)
+{
+  return _yr_re_node_contains_dot_star(re->root_node);
 }
 
 
@@ -362,6 +475,7 @@ int yr_re_split_at_chaining_point(
         return result;
 
       (*remainder_re)->root_node = child->left;
+      (*remainder_re)->flags = re->flags;
 
       child->left = NULL;
 
@@ -539,7 +653,9 @@ int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_emit_inst_arg_uint8(
         arena,
-        RE_OPCODE_LITERAL,
+        flags & EMIT_NO_CASE ?
+          RE_OPCODE_LITERAL_NO_CASE :
+          RE_OPCODE_LITERAL,
         re_node->value,
         &instruction_addr,
         NULL,
@@ -571,6 +687,24 @@ int _yr_re_emit(
     FAIL_ON_ERROR(_yr_emit_inst(
         arena,
         RE_OPCODE_NON_WORD_CHAR,
+        &instruction_addr,
+        code_size));
+    break;
+
+  case RE_NODE_WORD_BOUNDARY:
+
+    FAIL_ON_ERROR(_yr_emit_inst(
+        arena,
+        RE_OPCODE_WORD_BOUNDARY,
+        &instruction_addr,
+        code_size));
+    break;
+
+  case RE_NODE_NON_WORD_BOUNDARY:
+
+    FAIL_ON_ERROR(_yr_emit_inst(
+        arena,
+        RE_OPCODE_NON_WORD_BOUNDARY,
         &instruction_addr,
         code_size));
     break;
@@ -615,7 +749,9 @@ int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_emit_inst(
         arena,
-        RE_OPCODE_ANY,
+        flags & EMIT_DOT_ALL ?
+          RE_OPCODE_ANY :
+          RE_OPCODE_ANY_EXCEPT_NEW_LINE,
         &instruction_addr,
         code_size));
     break;
@@ -624,7 +760,9 @@ int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_emit_inst(
         arena,
-        RE_OPCODE_CLASS,
+        (flags & EMIT_NO_CASE) ?
+          RE_OPCODE_CLASS_NO_CASE :
+          RE_OPCODE_CLASS,
         &instruction_addr,
         code_size));
 
@@ -854,7 +992,7 @@ int _yr_re_emit(
         FAIL_ON_ERROR(_yr_re_emit(
             re_node->left,
             arena,
-            flags | DONT_UPDATE_FORWARDS_CODE,
+            flags | EMIT_DONT_SET_FORWARDS_CODE,
             NULL,
             &branch_size));
 
@@ -889,7 +1027,7 @@ int _yr_re_emit(
     FAIL_ON_ERROR(_yr_re_emit(
         re_node->left,
         arena,
-        flags | DONT_UPDATE_FORWARDS_CODE | DONT_UPDATE_BACKWARDS_CODE,
+        flags | EMIT_DONT_SET_FORWARDS_CODE | EMIT_DONT_SET_BACKWARDS_CODE,
         NULL,
         &branch_size));
 
@@ -918,12 +1056,12 @@ int _yr_re_emit(
 
   if (flags & EMIT_BACKWARDS)
   {
-    if (!(flags & DONT_UPDATE_BACKWARDS_CODE))
+    if (!(flags & EMIT_DONT_SET_BACKWARDS_CODE))
       re_node->backward_code = instruction_addr + *code_size;
   }
   else
   {
-    if (!(flags & DONT_UPDATE_FORWARDS_CODE))
+    if (!(flags & EMIT_DONT_SET_FORWARDS_CODE))
       re_node->forward_code = instruction_addr;
   }
 
@@ -939,6 +1077,15 @@ int yr_re_emit_code(
     YR_ARENA* arena)
 {
   int code_size;
+  int total_size;
+
+  int emit_flags = 0;
+
+  if (re->flags & RE_FLAGS_NO_CASE)
+    emit_flags |= EMIT_NO_CASE;
+
+  if (re->flags & RE_FLAGS_DOT_ALL)
+    emit_flags |= EMIT_DOT_ALL;
 
   // Ensure that we have enough contiguos memory space in the arena to
   // contain the regular expression code. The code can't span over multiple
@@ -948,39 +1095,51 @@ int yr_re_emit_code(
 
   // Emit code for matching the regular expressions forwards.
 
+  total_size = 0;
+
   FAIL_ON_ERROR(_yr_re_emit(
       re->root_node,
       arena,
-      0,
-      NULL,
+      emit_flags,
+      &re->code,
       &code_size));
 
-  assert(code_size < RE_MAX_CODE_SIZE);
+  total_size += code_size;
 
   FAIL_ON_ERROR(_yr_emit_inst(
       arena,
       RE_OPCODE_MATCH,
       NULL,
       &code_size));
+
+  total_size += code_size;
+
+  assert(total_size < RE_MAX_CODE_SIZE);
 
   yr_arena_reserve_memory(arena, RE_MAX_CODE_SIZE);
 
   // Emit code for matching the regular expressions backwards.
 
+  total_size = 0;
+
   FAIL_ON_ERROR(_yr_re_emit(
       re->root_node,
       arena,
-      EMIT_BACKWARDS,
+      emit_flags | EMIT_BACKWARDS,
       NULL,
       &code_size));
 
-  assert(code_size < RE_MAX_CODE_SIZE);
+  total_size += code_size;
 
   FAIL_ON_ERROR(_yr_emit_inst(
       arena,
       RE_OPCODE_MATCH,
       NULL,
       &code_size));
+
+  total_size += code_size;
+
+  assert(total_size < RE_MAX_CODE_SIZE);
 
   return ERROR_SUCCESS;
 }
@@ -989,15 +1148,15 @@ int yr_re_emit_code(
 int _yr_re_alloc_storage(
     RE_THREAD_STORAGE** storage)
 {
-  #ifdef WIN32
-  *storage = TlsGetValue(thread_storage_key);
+  #ifdef _WIN32
+  *storage = (RE_THREAD_STORAGE*) TlsGetValue(thread_storage_key);
   #else
-  *storage = pthread_getspecific(thread_storage_key);
+  *storage = (RE_THREAD_STORAGE*) pthread_getspecific(thread_storage_key);
   #endif
 
   if (*storage == NULL)
   {
-    *storage = yr_malloc(sizeof(RE_THREAD_STORAGE));
+    *storage = (RE_THREAD_STORAGE*) yr_malloc(sizeof(RE_THREAD_STORAGE));
 
     if (*storage == NULL)
       return ERROR_INSUFICIENT_MEMORY;
@@ -1005,7 +1164,7 @@ int _yr_re_alloc_storage(
     (*storage)->fiber_pool.head = NULL;
     (*storage)->fiber_pool.tail = NULL;
 
-    #ifdef WIN32
+    #ifdef _WIN32
     TlsSetValue(thread_storage_key, *storage);
     #else
     pthread_setspecific(thread_storage_key, *storage);
@@ -1030,7 +1189,7 @@ RE_FIBER* _yr_re_fiber_create(
   }
   else
   {
-    fiber = yr_malloc(sizeof(RE_FIBER));
+    fiber = (RE_FIBER*) yr_malloc(sizeof(RE_FIBER));
   }
 
   if (fiber != NULL)
@@ -1248,7 +1407,7 @@ void _yr_re_fiber_kill_tail(
 //
 // _yr_re_fiber_kill_tail
 //
-// Kills all fibers from in the fiber list.
+// Kills all fibers in the fiber list.
 //
 
 void _yr_re_fiber_kill_all(
@@ -1269,7 +1428,7 @@ void _yr_re_fiber_kill_all(
 // also synced.
 //
 
-void _yr_re_fiber_sync(
+int _yr_re_fiber_sync(
     RE_FIBER_LIST* fiber_list,
     RE_FIBER_LIST* fiber_pool,
     RE_FIBER* fiber_to_sync)
@@ -1289,12 +1448,18 @@ void _yr_re_fiber_sync(
     {
       case RE_OPCODE_SPLIT_A:
         new_fiber = _yr_re_fiber_split(fiber, fiber_list, fiber_pool);
+        if (new_fiber == NULL)
+          return ERROR_INSUFICIENT_MEMORY;
+
         new_fiber->ip += *(int16_t*)(fiber->ip + 1);
         fiber->ip += 3;
         break;
 
       case RE_OPCODE_SPLIT_B:
         new_fiber = _yr_re_fiber_split(fiber, fiber_list, fiber_pool);
+        if (new_fiber == NULL)
+          return ERROR_INSUFICIENT_MEMORY;
+
         new_fiber->ip += 3;
         fiber->ip += *(int16_t*)(fiber->ip + 1);
         break;
@@ -1328,6 +1493,7 @@ void _yr_re_fiber_sync(
           fiber = fiber->next;
     }
   }
+  return ERROR_SUCCESS;
 }
 
 
@@ -1337,7 +1503,7 @@ void _yr_re_fiber_sync(
 // Executes a regular expression
 //
 // Args:
-//   uint8_t* code                    - Pointer to regexp code be executed
+//   RE_CODE re_code                  - Regexp code be executed
 //   uint8_t* input                   - Pointer to input data
 //   size_t input_size                - Input data size
 //   int flags                        - Flags:
@@ -1353,31 +1519,34 @@ void _yr_re_fiber_sync(
 //    Integer indicating the number of matching bytes, including 0 when
 //    matching an empty regexp. Negative values indicate:
 //      -1  No match
-//      -2  Insuficient memory
-//      -3  Fatal error
+//      -2  Not enough memory
+//      -3  Too many matches
+//      -4  Unknown fatal error
 
 int yr_re_exec(
-    uint8_t* code,
+    RE_CODE re_code,
     uint8_t* input_data,
     size_t input_size,
     int flags,
     RE_MATCH_CALLBACK_FUNC callback,
     void* callback_args)
 {
-  uint8_t* ip;
   uint8_t* input;
   uint8_t mask;
   uint8_t value;
 
+  RE_CODE ip;
   RE_FIBER_LIST fibers;
   RE_THREAD_STORAGE* storage;
   RE_FIBER* fiber;
   RE_FIBER* next_fiber;
 
+  int error;
   int count;
   int max_count;
   int match;
   int character_size;
+  int input_incr;
   int kill;
   int action;
   int result = -1;
@@ -1402,20 +1571,34 @@ int yr_re_exec(
     character_size = 1;
 
   input = input_data;
+  input_incr = character_size;
 
   if (flags & RE_FLAGS_BACKWARDS)
+  {
     input -= character_size;
+    input_incr = -input_incr;
+  }
 
   max_count = min(input_size, RE_SCAN_LIMIT);
+
+  // Round down max_count to a multiple of character_size, this way if
+  // character_size is 2 and input_size is impair we are ignoring the
+  // extra byte which can't match anyways.
+
+  max_count = max_count - max_count % character_size;
+
   count = 0;
 
   fiber = _yr_re_fiber_create(&storage->fiber_pool);
-  fiber->ip = code;
+  fiber->ip = re_code;
 
   fibers.head = fiber;
   fibers.tail = fiber;
 
-  _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+  error = _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+
+  if (error != ERROR_SUCCESS)
+    return -2;
 
   while (fibers.head != NULL)
   {
@@ -1430,17 +1613,27 @@ int yr_re_exec(
       {
         case RE_OPCODE_ANY:
           prolog;
-          match = (*input != 0x0A || flags & RE_FLAGS_DOT_ALL);
+          action = ACTION_NONE;
+          fiber->ip += 1;
+          break;
+
+        case RE_OPCODE_ANY_EXCEPT_NEW_LINE:
+          prolog;
+          match = (*input != 0x0A);
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 1;
           break;
 
         case RE_OPCODE_LITERAL:
           prolog;
-          if (flags & RE_FLAGS_NO_CASE)
-            match = lowercase[*input] == lowercase[*(ip + 1)];
-          else
-            match = (*input == *(ip + 1));
+          match = (*input == *(ip + 1));
+          action = match ? ACTION_NONE : ACTION_KILL;
+          fiber->ip += 2;
+          break;
+
+        case RE_OPCODE_LITERAL_NO_CASE:
+          prolog;
+          match = lowercase[*input] == lowercase[*(ip + 1)];
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 2;
           break;
@@ -1461,51 +1654,37 @@ int yr_re_exec(
 
         case RE_OPCODE_CLASS:
           prolog;
-          if (flags & RE_FLAGS_NO_CASE)
-            match = CHAR_IN_CLASS(*input, ip + 1) ||
-                    CHAR_IN_CLASS(altercase[*input], ip + 1);
-          else
-            match = CHAR_IN_CLASS(*input, ip + 1);
+          match = CHAR_IN_CLASS(*input, ip + 1);
+          action = match ? ACTION_NONE : ACTION_KILL;
+          fiber->ip += 33;
+          break;
+
+        case RE_OPCODE_CLASS_NO_CASE:
+          prolog;
+          match = CHAR_IN_CLASS(*input, ip + 1) ||
+                  CHAR_IN_CLASS(altercase[*input], ip + 1);
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 33;
           break;
 
         case RE_OPCODE_WORD_CHAR:
           prolog;
-          match = (isalnum(*input) || *input == '_');
+          match = IS_WORD_CHAR(*input);
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 1;
           break;
 
         case RE_OPCODE_NON_WORD_CHAR:
           prolog;
-          match = (!isalnum(*input) && *input != '_');
+          match = !IS_WORD_CHAR(*input);
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 1;
           break;
 
         case RE_OPCODE_SPACE:
-          prolog;
-          switch(*input)
-          {
-            case ' ':
-            case '\t':
-            case '\r':
-            case '\n':
-            case '\v':
-            case '\f':
-              match = TRUE;
-              break;
-
-            default:
-              match = FALSE;
-          }
-          action = match ? ACTION_NONE : ACTION_KILL;
-          fiber->ip += 1;
-          break;
-
         case RE_OPCODE_NON_SPACE:
           prolog;
+
           switch(*input)
           {
             case ' ':
@@ -1514,12 +1693,16 @@ int yr_re_exec(
             case '\n':
             case '\v':
             case '\f':
-              match = FALSE;
+              match = TRUE;
               break;
 
             default:
-              match = TRUE;
+              match = FALSE;
           }
+
+          if (*ip == RE_OPCODE_NON_SPACE)
+            match = !match;
+
           action = match ? ACTION_NONE : ACTION_KILL;
           fiber->ip += 1;
           break;
@@ -1538,16 +1721,35 @@ int yr_re_exec(
           fiber->ip += 1;
           break;
 
+        case RE_OPCODE_WORD_BOUNDARY:
+        case RE_OPCODE_NON_WORD_BOUNDARY:
+
+          if (count == 0 &&
+              !(flags & RE_FLAGS_NOT_AT_START) &&
+              !(flags & RE_FLAGS_BACKWARDS))
+            match = TRUE;
+          else if (count >= max_count)
+            match = TRUE;
+          else if (IS_WORD_CHAR(*(input - input_incr)) != IS_WORD_CHAR(*input))
+            match = TRUE;
+          else
+            match = FALSE;
+
+          if (*ip == RE_OPCODE_NON_WORD_BOUNDARY)
+            match = !match;
+
+          action = match ? ACTION_CONTINUE : ACTION_KILL;
+          break;
+
         case RE_OPCODE_MATCH_AT_START:
           if (flags & RE_FLAGS_BACKWARDS)
-            kill = (input_size > count);
+            kill = input_size > count;
           else
             kill = (flags & RE_FLAGS_NOT_AT_START) || (count != 0);
           action = kill ? ACTION_KILL : ACTION_CONTINUE;
           break;
 
         case RE_OPCODE_MATCH_AT_END:
-          assert(!(flags & RE_FLAGS_BACKWARDS));
           action = input_size > count ? ACTION_KILL : ACTION_CONTINUE;
           break;
 
@@ -1556,10 +1758,28 @@ int yr_re_exec(
 
           if (flags & RE_FLAGS_EXHAUSTIVE)
           {
-            if (flags & RE_FLAGS_BACKWARDS)
-              callback(input + character_size, count, flags, callback_args);
-            else
-              callback(input_data, count, flags, callback_args);
+            if (callback != NULL)
+            {
+              int cb_result;
+
+              if (flags & RE_FLAGS_BACKWARDS)
+                cb_result = callback(
+                    input + character_size, count, flags, callback_args);
+              else
+                cb_result = callback(
+                    input_data, count, flags, callback_args);
+
+              switch(cb_result)
+              {
+                case ERROR_INSUFICIENT_MEMORY:
+                  return -2;
+                case ERROR_TOO_MANY_MATCHES:
+                  return -3;
+                default:
+                  if (cb_result != ERROR_SUCCESS)
+                    return -4;
+              }
+            }
 
             action = ACTION_KILL;
           }
@@ -1587,33 +1807,37 @@ int yr_re_exec(
 
         case ACTION_CONTINUE:
           fiber->ip += 1;
-          _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+          error = _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+          if (error != ERROR_SUCCESS)
+            return -2;
           break;
 
         default:
           next_fiber = fiber->next;
-          _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+          error = _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+          if (error != ERROR_SUCCESS)
+            return -2;
           fiber = next_fiber;
       }
     }
 
-    if (flags & RE_FLAGS_WIDE && count + 1 < max_count && *(input + 1) != 0)
+    if (flags & RE_FLAGS_WIDE && count < max_count && *(input + 1) != 0)
       _yr_re_fiber_kill_all(&fibers, &storage->fiber_pool);
 
-    if (flags & RE_FLAGS_BACKWARDS)
-      input -= character_size;
-    else
-      input += character_size;
-
+    input += input_incr;
     count += character_size;
 
     if (flags & RE_FLAGS_SCAN && count < max_count)
     {
       fiber = _yr_re_fiber_create(&storage->fiber_pool);
-      fiber->ip = code;
+      fiber->ip = re_code;
 
       _yr_re_fiber_append(&fibers, fiber);
-      _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+
+      error = _yr_re_fiber_sync(&fibers, &storage->fiber_pool, fiber);
+
+      if (error != ERROR_SUCCESS)
+        return -2;
     }
   }
 

@@ -18,30 +18,29 @@ limitations under the License.
 #include <stdio.h>
 #include <ctype.h>
 
-#include "mem.h"
-#include "re.h"
-#include "yara.h"
+#include <yara/error.h>
+#include <yara/re.h>
+#include <yara/modules.h>
+#include <yara/mem.h>
 
-#ifdef WIN32
+#ifdef _WIN32
 #define snprintf _snprintf
 #endif
 
-#ifdef WIN32
-#else
-#include <pthread.h>
-#endif
 
-char lowercase[256];
-char altercase[256];
-
-#ifdef WIN32
+#ifdef _WIN32
+#include <windows.h>
 DWORD tidx_key;
 DWORD recovery_state_key;
 #else
+#include <pthread.h>
 pthread_key_t tidx_key;
 pthread_key_t recovery_state_key;
 #endif
 
+
+char lowercase[256];
+char altercase[256];
 
 //
 // yr_initialize
@@ -50,7 +49,7 @@ pthread_key_t recovery_state_key;
 // function from libyara.
 //
 
-void yr_initialize(void)
+YR_API int yr_initialize(void)
 {
   int i;
 
@@ -66,9 +65,9 @@ void yr_initialize(void)
     lowercase[i] = tolower(i);
   }
 
-  yr_heap_alloc();
+  FAIL_ON_ERROR(yr_heap_alloc());
 
-  #ifdef WIN32
+  #ifdef _WIN32
   tidx_key = TlsAlloc();
   recovery_state_key = TlsAlloc();
   #else
@@ -76,7 +75,10 @@ void yr_initialize(void)
   pthread_key_create(&recovery_state_key, NULL);
   #endif
 
-  yr_re_initialize();
+  FAIL_ON_ERROR(yr_re_initialize());
+  FAIL_ON_ERROR(yr_modules_initialize());
+
+  return ERROR_SUCCESS;
 }
 
 
@@ -86,7 +88,7 @@ void yr_initialize(void)
 // Should be called by ALL threads using libyara before exiting.
 //
 
-void yr_finalize_thread(void)
+YR_API void yr_finalize_thread(void)
 {
   yr_re_finalize_thread();
 }
@@ -100,11 +102,11 @@ void yr_finalize_thread(void)
 // calls it.
 //
 
-void yr_finalize(void)
+YR_API int yr_finalize(void)
 {
   yr_re_finalize_thread();
 
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsFree(tidx_key);
   TlsFree(recovery_state_key);
   #else
@@ -112,8 +114,11 @@ void yr_finalize(void)
   pthread_key_delete(recovery_state_key);
   #endif
 
-  yr_re_finalize();
-  yr_heap_free();
+  FAIL_ON_ERROR(yr_re_finalize());
+  FAIL_ON_ERROR(yr_modules_finalize());
+  FAIL_ON_ERROR(yr_heap_free());
+
+  return ERROR_SUCCESS;
 }
 
 //
@@ -128,9 +133,9 @@ void yr_finalize(void)
 //                 thread.
 //
 
-void yr_set_tidx(int tidx)
+YR_API void yr_set_tidx(int tidx)
 {
-  #ifdef WIN32
+  #ifdef _WIN32
   TlsSetValue(tidx_key, (LPVOID) (tidx + 1));
   #else
   pthread_setspecific(tidx_key, (void*) (size_t) (tidx + 1));
@@ -148,9 +153,9 @@ void yr_set_tidx(int tidx)
 //    have any tidx associated.
 //
 
-int yr_get_tidx(void)
+YR_API int yr_get_tidx(void)
 {
-  #ifdef WIN32
+  #ifdef _WIN32
   return (int) TlsGetValue(tidx_key) - 1;
   #else
   return (int) (size_t) pthread_getspecific(tidx_key) - 1;

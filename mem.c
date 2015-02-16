@@ -14,22 +14,40 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifdef WIN32
+
+
+#ifdef _WIN32
 
 #include <windows.h>
 #include <string.h>
 
+#include <yara/error.h>
+
 static HANDLE hHeap;
 
-void yr_heap_alloc()
+int yr_heap_alloc()
 {
   hHeap = HeapCreate(0, 0x8000, 0);
+
+  if (hHeap == NULL)
+    return ERROR_INTERNAL_FATAL_ERROR;
+
+  return ERROR_SUCCESS;
 }
 
 
-void yr_heap_free()
+int yr_heap_free()
 {
-  HeapDestroy(hHeap);
+  if (HeapDestroy(hHeap))
+    return ERROR_SUCCESS;
+  else
+    return ERROR_INTERNAL_FATAL_ERROR;
+}
+
+
+void* yr_calloc(size_t count, size_t size)
+{
+  return (void*) HeapAlloc(hHeap, HEAP_ZERO_MEMORY, count * size);
 }
 
 
@@ -53,35 +71,58 @@ void yr_free(void* ptr)
 
 char* yr_strdup(const char *str)
 {
-  size_t len = strlen(str) + 1;
-  void *dup = yr_malloc(len);
+  size_t len = strlen(str);
+  char *dup = (char*) yr_malloc(len + 1);
 
-  if (dup != NULL)
-    memcpy(dup, str, len);
+  if (dup == NULL)
+    return NULL;
+
+  memcpy(dup, str, len);
+  dup[len] = '\0';
 
   return (char*) dup;
 }
 
+
+char* yr_strndup(const char *str, size_t n)
+{
+  size_t len = strnlen(str, n);
+  char *dup = (char*) yr_malloc(len + 1);
+
+  if (dup == NULL)
+    return NULL;
+
+  memcpy(dup, str, len);
+  dup[len] = '\0';
+
+  return (char *) dup;
+}
+
 #else
+
+#define _GNU_SOURCE
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#ifdef DMALLOC
-#include <dmalloc.h>
-#endif
+#include <yara/error.h>
 
-
-void yr_heap_alloc()
+int yr_heap_alloc()
 {
-  return;
+  return ERROR_SUCCESS;
 }
 
 
-void yr_heap_free()
+int yr_heap_free()
 {
-  return;
+  return ERROR_SUCCESS;
+}
+
+
+void* yr_calloc(size_t count, size_t size)
+{
+  return calloc(count, size);
 }
 
 
@@ -106,6 +147,12 @@ void yr_free(void *ptr)
 char* yr_strdup(const char *str)
 {
   return strdup(str);
+}
+
+
+char* yr_strndup(const char *str, size_t n)
+{
+  return strndup(str, n);
 }
 
 #endif

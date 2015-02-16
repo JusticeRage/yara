@@ -27,6 +27,7 @@
 #include <map>
 #include <exception>
 #include <algorithm>
+#include <climits>
 
 #include <stdlib.h>
 
@@ -37,7 +38,7 @@
 
 extern "C" {
 
-#include <yara/yara.h>
+#include <yara/include/yara.h>
 
 };
 
@@ -62,7 +63,7 @@ namespace yara {
  *
  *	@param	void* data	A pointer to a pmatch object which will be filled with the matching rules' metadata.
  */
-int get_match_data(int message, YR_RULE* rule, void* data);
+int get_match_data(int message, void* rule, void* data);
 
 /**
  *	@brief	An object representing Yara results.

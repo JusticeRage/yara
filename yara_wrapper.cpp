@@ -124,7 +124,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		if (rule_file == NULL) {
 			return false;
 		}
-		retval = yr_compiler_add_file(_compiler, rule_file, NULL);
+		retval = yr_compiler_add_file(_compiler, rule_file, NULL, NULL);
 		if (retval != ERROR_SUCCESS) {
 			goto END;
 		}
@@ -172,9 +172,9 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 	retval = yr_rules_scan_mem(_rules,
 							   &copy[0],		// The bytes to scan
 							   bytes.size(),	// Number of bytes
+                               SCAN_FLAGS_PROCESS_MEMORY,
 							   get_match_data,
 							   &res,			// The vector to fill
-							   FALSE,			// We don't want a fast scan.
 							   0);				// No timeout)
 
 	if (retval != ERROR_SUCCESS)
@@ -201,9 +201,9 @@ const_matches Yara::scan_file(const std::string& path)
 	
 	retval = yr_rules_scan_file(_rules,
 						        path.c_str(),
+                                SCAN_FLAGS_PROCESS_MEMORY,
 								get_match_data,
 								&res,
-								FALSE,
 								0);
 
 	if (retval != ERROR_SUCCESS)
@@ -216,11 +216,12 @@ const_matches Yara::scan_file(const std::string& path)
 
 // ----------------------------------------------------------------------------
 
-int get_match_data(int message, YR_RULE* rule, void* data)
+int get_match_data(int message, void* message_data, void* data)
 {
 	matches* target = NULL;
 	YR_META* meta = NULL;
 	YR_STRING* s = NULL;
+    YR_RULE* rule = (YR_RULE*) message_data;
 	pMatch m;
 
 	switch (message)
@@ -255,7 +256,7 @@ int get_match_data(int message, YR_RULE* rule, void* data)
 						{
 							std::stringstream ss;
 							ss << std::hex;
-							for (int i = 0; i < std::min(20, match->length); i++) {
+							for (int i = 0; i < min(20, match->length); i++) {
 								ss << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
 							}
 							if (match->length > 20) {
