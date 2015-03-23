@@ -1,3 +1,5 @@
+MODULE(sgpe)
+
 // MODULE(tests)
 // MODULE(pe)
 // MODULE(elf)

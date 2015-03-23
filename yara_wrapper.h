@@ -36,6 +36,9 @@
 #include <boost/filesystem.hpp>
 #include <boost/system/api_config.hpp>
 
+// Contains the definition of the structure used to communicate with the module.
+#include "yara/modules/sgpe_data.h"
+
 extern "C" {
 
 #include <yara/include/yara.h>
@@ -107,6 +110,14 @@ typedef std::vector<pMatch> match_vector;
 typedef boost::shared_ptr<match_vector > matches;
 typedef boost::shared_ptr<const match_vector > const_matches;
 
+// The structures used to communicate with the callback called by yara.
+typedef boost::shared_ptr<sgpe_data> psgpe_data;
+typedef struct callback_data_t {
+	matches yara_matches;
+	psgpe_data pe_info;
+} callback_data;
+typedef boost::shared_ptr<callback_data> pcallback_data;
+
 class Yara
 {
 public:
@@ -137,11 +148,25 @@ public:
 	/**
 	 *	@brief	Tries to match an input file with the currently loaded Yara rules.
 	 *
-	 *	@param	const std::string& path The path to the file to scan..
+	 *	@param	const std::string& path The path to the file to scan.
+	 *	@param	psgpe_data pe_info A structure containing the PE info made available to the SGPE module (@EP, etc.)
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_file(const std::string& path);
+	Y_DECLSPEC const_matches scan_file(const std::string& path, psgpe_data pe_info);
+
+	/**
+	*	@brief	Tries to match an input file with the currently loaded Yara rules.
+	*
+	*	Use this function when the SGPE module is not used and no data needs to be passed to it.
+	*
+	*	@param	const std::string& path The path to the file to scan.
+	*
+	*	@return	A map containing the rule's metadata for all matching signatures.
+	*/
+	Y_DECLSPEC const_matches scan_file(const std::string& path) {
+		return scan_file(path, psgpe_data());
+	}
 
 	void operator delete(void*);
 

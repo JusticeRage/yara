@@ -125,7 +125,9 @@ bool Yara::load_rules(const std::string& rule_filename)
 			return false;
 		}
 		retval = yr_compiler_add_file(_compiler, rule_file, NULL, NULL);
-		if (retval != ERROR_SUCCESS) {
+		if (retval != ERROR_SUCCESS) 
+		{
+			PRINT_ERROR << "Could not compile yara rules." << std::endl;
 			goto END;
 		}
 		retval = yr_compiler_get_rules(_compiler, &_rules);
@@ -154,14 +156,15 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 {
-	matches res = matches(new match_vector());
+	pcallback_data cb_data(new callback_data);
+	cb_data->yara_matches = matches(new match_vector());
 	int retval;
 	if (_rules == NULL || bytes.size() == 0)
 	{
 		if (_rules == NULL) {
 			PRINT_ERROR << "No Yara rules loaded!" << std::endl;
 		}
-		return res;
+		return cb_data->yara_matches;
 	}
 
 	// Make a copy of the input buffer, because we can't be sure that Yara will not modify it
@@ -174,60 +177,70 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 							   bytes.size(),	// Number of bytes
                                SCAN_FLAGS_PROCESS_MEMORY,
 							   get_match_data,
-							   &res,			// The vector to fill
+							   &cb_data,			// The vector to fill
 							   0);				// No timeout)
 
 	if (retval != ERROR_SUCCESS)
 	{
-		//TODO: Translate yara errors defined in yara.h
+		//TODO: Translate yara errors defined in yara/error.h
 		PRINT_ERROR << "Yara error code = 0x" << std::hex << retval << std::endl;
-		res->clear();
+		cb_data->yara_matches->clear();
 	}
 
-	return res;
+	return cb_data->yara_matches;
 }
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_file(const std::string& path)
+const_matches Yara::scan_file(const std::string& path, psgpe_data pe_data)
 {
-	matches res = matches(new match_vector());
+	pcallback_data cb_data(new callback_data);
+	cb_data->yara_matches = matches(new match_vector());
+	cb_data->pe_info = pe_data;
 	int retval;
 	if (_rules == NULL)	
 	{
 		PRINT_ERROR << "No Yara rules loaded!" << std::endl;
-		return res;
+		return cb_data->yara_matches;
 	}
 	
 	retval = yr_rules_scan_file(_rules,
 						        path.c_str(),
                                 SCAN_FLAGS_PROCESS_MEMORY,
 								get_match_data,
-								&res,
+								&cb_data,
 								0);
 
 	if (retval != ERROR_SUCCESS)
 	{
-		PRINT_ERROR << "Yara error code = 0x" << std::hex << retval << std::endl;
-		res->clear();
+		PRINT_ERROR << "Yara error code: 0x" << std::hex << retval << std::endl;
+		cb_data->yara_matches->clear();
 	}
-	return res;
+	return cb_data->yara_matches;
 }
 
 // ----------------------------------------------------------------------------
 
 int get_match_data(int message, void* message_data, void* data)
 {
-	matches* target = NULL;
+	matches target;
 	YR_META* meta = NULL;
 	YR_STRING* s = NULL;
-    YR_RULE* rule = (YR_RULE*) message_data;
+	YR_RULE* rule = NULL;
 	pMatch m;
+	YR_MODULE_IMPORT* mi = NULL; // Used for the CALLBACK_MSG_IMPORT_MODULE message.
+	pcallback_data* cb_data = (pcallback_data*) data;
+	if (!cb_data) 
+	{
+		PRINT_ERROR << "Yara wrapper callback called with no data!" << std::endl;
+		return ERROR_CALLBACK_ERROR;
+	}
 
 	switch (message)
 	{
 		case CALLBACK_MSG_RULE_MATCHING:
-			target = (matches*)data; // I know what I'm doing.
+			rule = (YR_RULE*) message_data;
+			target = cb_data->get()->yara_matches;
 			meta = rule->metas;
 			s = rule->strings;
 			m = pMatch(new Match);
@@ -270,11 +283,32 @@ int get_match_data(int message, void* message_data, void* data)
 				++s;
 			}
 
-			(*target)->push_back(m);
+			target->push_back(m);
 			return CALLBACK_CONTINUE; // Don't stop on the first matching rule.
 
 		case CALLBACK_MSG_RULE_NOT_MATCHING:
 			return CALLBACK_CONTINUE;
+
+		// Detect when the SGPE module is loaded
+		case CALLBACK_MSG_IMPORT_MODULE:
+			mi = (YR_MODULE_IMPORT*) message_data;
+			if (std::string(mi->module_name) == "sgpe")
+			{
+				if (cb_data->get()->pe_info == NULL)
+				{
+					PRINT_ERROR << "Yara rule imports the SGPE module, but no SGPE data was given!" << std::endl;
+					return ERROR_CALLBACK_ERROR;
+				}
+				mi->module_data = &*(cb_data->get()->pe_info);
+			}
+			return ERROR_SUCCESS;
+
+		case CALLBACK_MSG_SCAN_FINISHED:
+			return ERROR_SUCCESS;
+
+		default:
+			PRINT_WARNING << "Yara callback received an unhandled message (" << message << ")." << std::endl;
+			return ERROR_SUCCESS;
 	}
 	return CALLBACK_ERROR;
 }
