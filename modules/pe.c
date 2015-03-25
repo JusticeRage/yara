@@ -92,7 +92,9 @@ limitations under the License.
 
 
 #define fits_in_pe(pe, pointer, size) \
-    ((uint8_t*)(pointer) + size <= pe->data + pe->data_size)
+    (size <= pe->data_size && \
+     (uint8_t*)(pointer) >= pe->data && \
+     (uint8_t*)(pointer) + size <= pe->data + pe->data_size)
 
 
 #define struct_fits_in_pe(pe, pointer, struct_type) \
@@ -149,6 +151,25 @@ typedef struct _PE
   uint32_t resources;
 
 } PE;
+
+
+int wide_string_fits_in_pe(
+    PE* pe,
+    char* data)
+{
+  size_t i = 0;
+  size_t space_left = available_space(pe, data);
+
+  while (space_left >= 2)
+  {
+    if (data[i] == 0 && data[i + 1] == 0)
+      return 1;
+    space_left -= 2;
+    i += 2;
+  }
+
+  return 0;
+}
 
 
 PIMAGE_NT_HEADERS32 pe_get_header(
@@ -321,6 +342,8 @@ void pe_parse_rich_signature(
     set_sized_string(
         (char*) clear_data, rich_len, pe->object, "rich_signature.clear_data");
 
+    yr_free(raw_data);
+    yr_free(clear_data);
     return;
   }
 
@@ -347,17 +370,13 @@ uint64_t pe_rva_to_offset(
     PE* pe,
     uint64_t rva)
 {
-  PIMAGE_SECTION_HEADER section;
-  DWORD section_rva;
-  DWORD section_offset;
+  PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(pe->header);
+  DWORD section_rva = 0;
+  DWORD section_offset = 0;
 
   int i = 0;
 
-  section = IMAGE_FIRST_SECTION(pe->header);
-  section_rva = 0;
-  section_offset = 0;
-
-  while(i < min(pe->header->FileHeader.NumberOfSections, MAX_PE_SECTIONS))
+  while(i < yr_min(pe->header->FileHeader.NumberOfSections, MAX_PE_SECTIONS))
   {
     if ((uint8_t*) section - \
         (uint8_t*) pe->data + sizeof(IMAGE_SECTION_HEADER) < pe->data_size)
@@ -542,6 +561,7 @@ int pe_iterate_resources(
   int type = -1;
   int id = -1;
   int language = -1;
+
   uint8_t* type_string = NULL;
   uint8_t* name_string = NULL;
   uint8_t* lang_string = NULL;
@@ -604,20 +624,12 @@ void pe_parse_version_info(
     PIMAGE_RESOURCE_DATA_ENTRY rsrc_data,
     PE* pe)
 {
-  PVERSION_INFO version_info;
-  PVERSION_INFO string_file_info;
-
-  char key[64];
-  char value[256];
-
-  size_t version_info_offset;
-
-  version_info_offset = pe_rva_to_offset(pe, rsrc_data->OffsetToData);
+  size_t version_info_offset = pe_rva_to_offset(pe, rsrc_data->OffsetToData);
 
   if (version_info_offset == 0)
     return;
 
-  version_info = (PVERSION_INFO) (pe->data + version_info_offset);
+  PVERSION_INFO version_info = (PVERSION_INFO) (pe->data + version_info_offset);
 
   if (!fits_in_pe(pe, version_info->Key, sizeof("VS_VERSION_INFO") * 2))
     return;
@@ -625,10 +637,12 @@ void pe_parse_version_info(
   if (strcmp_w(version_info->Key, "VS_VERSION_INFO") != 0)
     return;
 
-  string_file_info = ADD_OFFSET(version_info, sizeof(VERSION_INFO) + 86);
+  PVERSION_INFO string_file_info = ADD_OFFSET(
+      version_info, sizeof(VERSION_INFO) + 86);
 
   while(fits_in_pe(pe, string_file_info->Key, sizeof("StringFileInfo") * 2) &&
-        strcmp_w(string_file_info->Key, "StringFileInfo") == 0)
+        strcmp_w(string_file_info->Key, "StringFileInfo") == 0 &&
+        string_file_info->Length != 0)
   {
     PVERSION_INFO string_table = ADD_OFFSET(
         string_file_info,
@@ -639,34 +653,39 @@ void pe_parse_version_info(
         string_file_info->Length);
 
     while (struct_fits_in_pe(pe, string_table, VERSION_INFO) &&
+           wide_string_fits_in_pe(pe, string_table->Key) &&
            string_table->Length != 0 &&
            string_table < string_file_info)
     {
       PVERSION_INFO string = ADD_OFFSET(
           string_table,
-          sizeof(VERSION_INFO) + 2 * (strnlen_w(string_table->Key,
-              available_space(pe, string_table->Key)) + 1));
+          sizeof(VERSION_INFO) + 2 * (strnlen_w(string_table->Key) + 1));
 
       string_table = ADD_OFFSET(
           string_table,
           string_table->Length);
 
       while (struct_fits_in_pe(pe, string, VERSION_INFO) &&
+             wide_string_fits_in_pe(pe, string->Key) &&
              string->Length != 0 &&
              string < string_table)
       {
-        char* string_value = (char*) ADD_OFFSET(
-            string,
-            sizeof(VERSION_INFO) + 2 * (strnlen_w(string->Key,
-                available_space(pe, string->Key)) + 1));
+        if (string->ValueLength > 0)
+        {
+          char* string_value = (char*) ADD_OFFSET(string,
+              sizeof(VERSION_INFO) + 2 * (strnlen_w(string->Key) + 1));
 
-        strlcpy_w(key, string->Key,
-            min(sizeof(key), available_space(pe, string->Key)));
+          if (wide_string_fits_in_pe(pe, string_value))
+          {
+            char key[64];
+            char value[256];
 
-        strlcpy_w(value, string_value,
-            min(sizeof(value), available_space(pe, string_value)));
+            strlcpy_w(key, string->Key, sizeof(key));
+            strlcpy_w(value, string_value, sizeof(value));
 
-        set_string(value, pe->object, "version_info[%s]", key);
+            set_string(value, pe->object, "version_info[%s]", key);
+          }
+        }
 
         string = ADD_OFFSET(string, string->Length);
       }
@@ -688,7 +707,7 @@ int pe_collect_resources(
   DWORD length;
   size_t offset = pe_rva_to_offset(pe, rsrc_data->OffsetToData);
 
-  if (offset == 0 || !fits_in_pe(pe, offset, rsrc_data->Size))
+  if (offset == 0 || !fits_in_pe(pe, pe->data + offset, rsrc_data->Size))
     return RESOURCE_CALLBACK_CONTINUE;
 
   set_integer(
@@ -733,10 +752,10 @@ int pe_collect_resources(
   else
   {
     set_integer(
-          rsrc_id,
-          pe->object,
-          "resources[%i].id",
-          pe->resources);
+        rsrc_id,
+        pe->object,
+        "resources[%i].id",
+        pe->resources);
   }
 
   if (lang_string)
@@ -751,10 +770,10 @@ int pe_collect_resources(
   else
   {
     set_integer(
-          rsrc_language,
-          pe->object,
-          "resources[%i].language",
-          pe->resources);
+        rsrc_language,
+        pe->object,
+        "resources[%i].language",
+        pe->resources);
   }
 
   // Resources we do extra parsing on
@@ -809,7 +828,7 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
           {
             name = (char *) yr_strndup(
                 (char*) import->Name,
-                min(available_space(pe, import->Name), 512));
+                yr_min(available_space(pe, import->Name), 512));
           }
         }
       }
@@ -862,7 +881,7 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
           {
             name = (char *) yr_strndup(
                 (char*) import->Name,
-                min(available_space(pe, import->Name), 512));
+                yr_min(available_space(pe, import->Name), 512));
           }
         }
       }
@@ -1231,7 +1250,7 @@ void pe_parse_header(
 
   section = IMAGE_FIRST_SECTION(pe->header);
 
-  int scount = min(pe->header->FileHeader.NumberOfSections, MAX_PE_SECTIONS);
+  int scount = yr_min(pe->header->FileHeader.NumberOfSections, MAX_PE_SECTIONS);
 
   for (int i = 0; i < scount; i++)
   {
@@ -1291,6 +1310,7 @@ define_function(section_index_addr)
 {
   YR_OBJECT* module = module();
   YR_SCAN_CONTEXT* context = scan_context();
+
   int64_t offset;
   int64_t size;
 
@@ -1409,9 +1429,6 @@ define_function(exports)
 define_function(imphash)
 {
   YR_OBJECT* module = module();
-  IMPORTED_DLL* dll = NULL;
-  IMPORTED_FUNCTION* func = NULL;
-
   MD5_CTX ctx;
 
   unsigned char digest[MD5_DIGEST_LENGTH];
@@ -1427,7 +1444,7 @@ define_function(imphash)
 
   MD5_Init(&ctx);
 
-  dll = pe->imported_dlls;
+  IMPORTED_DLL* dll = pe->imported_dlls;
 
   while (dll)
   {
@@ -1451,12 +1468,13 @@ define_function(imphash)
     // Allocate a new string to hold the dll name.
 
     char* dll_name = (char *) yr_malloc(dll_name_len + 1);
-    if (! dll_name)
+
+    if (!dll_name)
       return ERROR_INSUFICIENT_MEMORY;
 
     strlcpy(dll_name, dll->name, dll_name_len + 1);
 
-    func = dll->functions;
+    IMPORTED_FUNCTION* func = dll->functions;
 
     while (func)
     {
@@ -1468,10 +1486,10 @@ define_function(imphash)
       char* final_name = (char*) yr_malloc(final_name_len + 1);
 
       if (final_name == NULL)
-        {
-          yr_free(dll_name);
-          break;
-        }
+      {
+        yr_free(dll_name);
+        break;
+      }
 
       sprintf(final_name, first ? "%s.%s": ",%s.%s", dll_name, func->name);
 
@@ -1518,19 +1536,16 @@ define_function(imports)
   YR_OBJECT* module = module();
   PE* pe = (PE*) module->data;
 
-  IMPORTED_DLL* imported_dll = NULL;
-  IMPORTED_FUNCTION* imported_func = NULL;
-
   if (!pe)
     return_integer(UNDEFINED);
 
-  imported_dll = pe->imported_dlls;
+  IMPORTED_DLL* imported_dll = pe->imported_dlls;
 
   while (imported_dll != NULL)
   {
     if (strcasecmp(imported_dll->name, dll_name) == 0)
     {
-      imported_func = imported_dll->functions;
+      IMPORTED_FUNCTION* imported_func = imported_dll->functions;
 
       while (imported_func != NULL)
       {
@@ -2088,7 +2103,8 @@ int module_load(
 }
 
 
-int module_unload(YR_OBJECT* module_object)
+int module_unload(
+    YR_OBJECT* module_object)
 {
   IMPORTED_DLL* dll = NULL;
   IMPORTED_DLL* next_dll = NULL;
@@ -2104,10 +2120,16 @@ int module_unload(YR_OBJECT* module_object)
 
   while (dll)
   {
+    if (dll->name)
+      yr_free(dll->name);
+
     func = dll->functions;
 
     while (func)
     {
+      if (func->name)
+        yr_free(func->name);
+
       next_func = func->next;
       yr_free(func);
       func = next_func;

@@ -46,7 +46,7 @@ order to avoid confusion with operating system threads.
 
 
 #define RE_MAX_STACK      1024  // Maxium stack size for regexp evaluation
-#define RE_MAX_CODE_SIZE  16384 // Maximum code size for a compiled regexp
+#define RE_MAX_CODE_SIZE  32768 // Maximum code size for a compiled regexp
 #define RE_SCAN_LIMIT     4096  // Maximum input size scanned by yr_re_exec
 
 
@@ -1579,7 +1579,7 @@ int yr_re_exec(
     input_incr = -input_incr;
   }
 
-  max_count = min(input_size, RE_SCAN_LIMIT);
+  max_count = yr_min(input_size, RE_SCAN_LIMIT);
 
   // Round down max_count to a multiple of character_size, this way if
   // character_size is 2 and input_size is impair we are ignoring the

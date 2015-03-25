@@ -36,8 +36,8 @@ limitations under the License.
 
 int yr_parser_emit(
     yyscan_t yyscanner,
-    int8_t instruction,
-    int8_t** instruction_address)
+    uint8_t instruction,
+    uint8_t** instruction_address)
 {
   return yr_arena_write_data(
       yyget_extra(yyscanner)->code_arena,
@@ -49,14 +49,15 @@ int yr_parser_emit(
 
 int yr_parser_emit_with_arg_double(
     yyscan_t yyscanner,
-    int8_t instruction,
+    uint8_t instruction,
     double argument,
-    int8_t** instruction_address)
+    uint8_t** instruction_address,
+    double** argument_address)
 {
   int result = yr_arena_write_data(
       yyget_extra(yyscanner)->code_arena,
       &instruction,
-      sizeof(int8_t),
+      sizeof(uint8_t),
       (void**) instruction_address);
 
   if (result == ERROR_SUCCESS)
@@ -64,7 +65,7 @@ int yr_parser_emit_with_arg_double(
         yyget_extra(yyscanner)->code_arena,
         &argument,
         sizeof(double),
-        NULL);
+        (void**) argument_address);
 
   return result;
 }
@@ -72,14 +73,15 @@ int yr_parser_emit_with_arg_double(
 
 int yr_parser_emit_with_arg(
     yyscan_t yyscanner,
-    int8_t instruction,
+    uint8_t instruction,
     int64_t argument,
-    int8_t** instruction_address)
+    uint8_t** instruction_address,
+    int64_t** argument_address)
 {
   int result = yr_arena_write_data(
       yyget_extra(yyscanner)->code_arena,
       &instruction,
-      sizeof(int8_t),
+      sizeof(uint8_t),
       (void**) instruction_address);
 
   if (result == ERROR_SUCCESS)
@@ -87,7 +89,7 @@ int yr_parser_emit_with_arg(
         yyget_extra(yyscanner)->code_arena,
         &argument,
         sizeof(int64_t),
-        NULL);
+        (void**) argument_address);
 
   return result;
 }
@@ -95,16 +97,17 @@ int yr_parser_emit_with_arg(
 
 int yr_parser_emit_with_arg_reloc(
     yyscan_t yyscanner,
-    int8_t instruction,
+    uint8_t instruction,
     int64_t argument,
-    int8_t** instruction_address)
+    uint8_t** instruction_address,
+    int64_t** argument_address)
 {
-  void* ptr;
+  int64_t* ptr;
 
   int result = yr_arena_write_data(
       yyget_extra(yyscanner)->code_arena,
       &instruction,
-      sizeof(int8_t),
+      sizeof(uint8_t),
       (void**) instruction_address);
 
   if (result == ERROR_SUCCESS)
@@ -112,7 +115,7 @@ int yr_parser_emit_with_arg_reloc(
         yyget_extra(yyscanner)->code_arena,
         &argument,
         sizeof(int64_t),
-        &ptr);
+        (void**) &ptr);
 
   if (result == ERROR_SUCCESS)
     result = yr_arena_make_relocatable(
@@ -120,6 +123,9 @@ int yr_parser_emit_with_arg_reloc(
         ptr,
         0,
         EOL);
+
+  if (argument_address != NULL)
+    *argument_address = ptr;
 
   return result;
 }
@@ -130,7 +136,7 @@ int yr_parser_emit_pushes_for_strings(
     const char* identifier)
 {
   YR_COMPILER* compiler = yyget_extra(yyscanner);
-  YR_STRING* string = compiler->current_rule_strings;
+  YR_STRING* string = compiler->current_rule->strings;
 
   const char* string_identifier;
   const char* target_identifier;
@@ -161,7 +167,8 @@ int yr_parser_emit_pushes_for_strings(
         yr_parser_emit_with_arg_reloc(
             yyscanner,
             OP_PUSH,
-            PTR_TO_UINT64(string),
+            PTR_TO_INT64(string),
+            NULL,
             NULL);
 
         string->g_flags |= STRING_GFLAGS_REFERENCED;
@@ -217,7 +224,7 @@ YR_STRING* yr_parser_lookup_string(
   YR_STRING* string;
   YR_COMPILER* compiler = yyget_extra(yyscanner);
 
-  string = compiler->current_rule_strings;
+  string = compiler->current_rule->strings;
 
   while(!STRING_IS_NULL(string))
   {
@@ -640,7 +647,7 @@ _exit:
 }
 
 
-int yr_parser_reduce_rule_declaration(
+YR_RULE* yr_parser_reduce_rule_declaration_phase_1(
     yyscan_t yyscanner,
     int32_t flags,
     const char* identifier,
@@ -649,9 +656,7 @@ int yr_parser_reduce_rule_declaration(
     YR_META* metas)
 {
   YR_COMPILER* compiler = yyget_extra(yyscanner);
-
-  YR_RULE* rule;
-  YR_STRING* string;
+  YR_RULE* rule = NULL;
 
   if (yr_hash_table_lookup(
         compiler->rules_table,
@@ -667,12 +672,66 @@ int yr_parser_reduce_rule_declaration(
 
     yr_compiler_set_error_extra_info(compiler, identifier);
     compiler->last_result = ERROR_DUPLICATED_IDENTIFIER;
-    return compiler->last_result;
+    return NULL;
   }
+
+  compiler->last_result = yr_arena_allocate_struct(
+      compiler->rules_arena,
+      sizeof(YR_RULE),
+      (void**) &rule,
+      offsetof(YR_RULE, identifier),
+      offsetof(YR_RULE, tags),
+      offsetof(YR_RULE, strings),
+      offsetof(YR_RULE, metas),
+      offsetof(YR_RULE, ns),
+      EOL);
+
+  if (compiler->last_result != ERROR_SUCCESS)
+    return NULL;
+
+  rule->g_flags = flags;
+  rule->tags = tags;
+  rule->strings = strings;
+  rule->metas = metas;
+  rule->ns = compiler->current_namespace;
+
+  #ifdef PROFILING_ENABLED
+  rule->clock_ticks = 0;
+  #endif
+
+  compiler->last_result = yr_arena_write_string(
+      compiler->sz_arena,
+      identifier,
+      (char**) &rule->identifier);
+
+  compiler->last_result = yr_parser_emit_with_arg_reloc(
+      yyscanner,
+      OP_INIT_RULE,
+      PTR_TO_INT64(rule),
+      NULL,
+      NULL);
+
+  if (compiler->last_result == ERROR_SUCCESS)
+    compiler->last_result = yr_hash_table_add(
+        compiler->rules_table,
+        identifier,
+        compiler->current_namespace->name,
+        (void*) rule);
+
+  compiler->current_rule = rule;
+
+  return rule;
+}
+
+int yr_parser_reduce_rule_declaration_phase_2(
+    yyscan_t yyscanner,
+    YR_RULE* rule)
+{
+  YR_COMPILER* compiler = yyget_extra(yyscanner);
 
   // Check for unreferenced (unused) strings.
 
-  string = compiler->current_rule_strings;
+  YR_STRING* string = rule->strings;
 
   while(!STRING_IS_NULL(string))
   {
@@ -685,7 +744,7 @@ int yr_parser_reduce_rule_declaration(
     {
       yr_compiler_set_error_extra_info(compiler, string->identifier);
       compiler->last_result = ERROR_UNREFERENCED_STRING;
-      break;
+      return compiler->last_result;
     }
 
     string = (YR_STRING*) yr_arena_next_address(
@@ -694,58 +753,22 @@ int yr_parser_reduce_rule_declaration(
         sizeof(YR_STRING));
   }
 
-  if (compiler->last_result != ERROR_SUCCESS)
-    return compiler->last_result;
-
-  FAIL_ON_COMPILER_ERROR(yr_arena_allocate_struct(
-      compiler->rules_arena,
-      sizeof(YR_RULE),
-      (void**) &rule,
-      offsetof(YR_RULE, identifier),
-      offsetof(YR_RULE, tags),
-      offsetof(YR_RULE, strings),
-      offsetof(YR_RULE, metas),
-      offsetof(YR_RULE, ns),
-      EOL));
-
-  rule->g_flags = flags | compiler->current_rule_flags;
-  rule->tags = tags;
-  rule->strings = strings;
-  rule->metas = metas;
-  rule->ns = compiler->current_namespace;
-
-  #ifdef PROFILING_ENABLED
-  rule->clock_ticks = 0;
-  #endif
-
-  FAIL_ON_COMPILER_ERROR(yr_arena_write_string(
-      compiler->sz_arena,
-      identifier,
-      (char**) &rule->identifier));
-
-  FAIL_ON_COMPILER_ERROR(yr_parser_emit_with_arg_reloc(
+  compiler->last_result = yr_parser_emit_with_arg_reloc(
       yyscanner,
       OP_MATCH_RULE,
-      PTR_TO_UINT64(rule),
-      NULL));
-
-  FAIL_ON_COMPILER_ERROR(yr_hash_table_add(
-      compiler->rules_table,
-      identifier,
-      compiler->current_namespace->name,
-      (void*) rule));
-
-  compiler->current_rule_flags = 0;
-  compiler->current_rule_strings = NULL;
+      PTR_TO_INT64(rule),
+      NULL,
+      NULL);
 
   return compiler->last_result;
 }
 
 
+
 int yr_parser_reduce_string_identifier(
     yyscan_t yyscanner,
     const char* identifier,
-    int8_t instruction,
+    uint8_t instruction,
     uint64_t at_offset)
 {
   YR_STRING* string;
@@ -759,11 +782,12 @@ int yr_parser_reduce_string_identifier(
           yyscanner,
           OP_PUSH_M,
           compiler->loop_for_of_mem_offset,
+          NULL,
           NULL);
 
       yr_parser_emit(yyscanner, instruction, NULL);
 
-      string = compiler->current_rule_strings;
+      string = compiler->current_rule->strings;
 
       while(!STRING_IS_NULL(string))
       {
@@ -810,7 +834,8 @@ int yr_parser_reduce_string_identifier(
       yr_parser_emit_with_arg_reloc(
           yyscanner,
           OP_PUSH,
-          PTR_TO_UINT64(string),
+          PTR_TO_INT64(string),
+          NULL,
           NULL);
 
       if (instruction != OP_FOUND)
@@ -947,7 +972,8 @@ int yr_parser_reduce_import(
     compiler->last_result = yr_parser_emit_with_arg_reloc(
         yyscanner,
         OP_IMPORT,
-        PTR_TO_UINT64(name),
+        PTR_TO_INT64(name),
+        NULL,
         NULL);
 
   return compiler->last_result;
@@ -1044,6 +1070,7 @@ int yr_parser_reduce_operation(
           yyscanner,
           OP_INT_TO_DBL,
           (left_operand.type == EXPRESSION_TYPE_INTEGER) ? 2 : 1,
+          NULL,
           NULL);
     }
 

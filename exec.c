@@ -29,6 +29,7 @@ limitations under the License.
 #include <yara/re.h>
 #include <yara/strutils.h>
 #include <yara/utils.h>
+#include <yara/mem.h>
 
 #include <yara.h>
 
@@ -36,14 +37,17 @@ limitations under the License.
 #define STACK_SIZE 16384
 #define MEM_SIZE   MAX_LOOP_NESTING * LOOP_LOCAL_VARS
 
-union STACK_ITEM {
+typedef union _STACK_ITEM {
+
   int64_t i;
   double d;
   void* p;
   YR_OBJECT* o;
   YR_STRING* s;
   SIZED_STRING* ss;
-};
+
+} STACK_ITEM;
+
 
 #define push(x)  \
     do { \
@@ -122,6 +126,30 @@ function_read(int16_t, big_endian)
 function_read(int32_t, big_endian)
 
 
+static uint8_t* jmp_if(
+    int condition,
+    uint8_t* ip)
+{
+  uint8_t* result;
+
+  if (condition)
+  {
+    result = *(uint8_t**)(ip + 1);
+
+    // ip will be incremented at the end of the execution loop,
+    // decrement it here to compensate.
+
+    result--;
+  }
+  else
+  {
+    result = ip + sizeof(uint64_t);
+  }
+
+  return result;
+}
+
+
 int yr_execute_code(
     YR_RULES* rules,
     YR_SCAN_CONTEXT* context,
@@ -133,11 +161,12 @@ int yr_execute_code(
   int32_t sp = 0;
   uint8_t* ip = rules->code_start;
 
-  union STACK_ITEM stack[STACK_SIZE];
-  union STACK_ITEM r1;
-  union STACK_ITEM r2;
-  union STACK_ITEM r3;
+  STACK_ITEM *stack;
+  STACK_ITEM r1;
+  STACK_ITEM r2;
+  STACK_ITEM r3;
 
+  YR_RULE* current_rule = NULL;
   YR_RULE* rule;
   YR_MATCH* match;
   YR_OBJECT_FUNCTION* function;
@@ -148,7 +177,8 @@ int yr_execute_code(
   int i;
   int found;
   int count;
-  int result;
+  int result = ERROR_SUCCESS;
+  int stop = FALSE;
   int cycle = 0;
   int tidx = yr_get_tidx();
 
@@ -156,15 +186,19 @@ int yr_execute_code(
   clock_t start = clock();
   #endif
 
-  while(1)
+  stack = (STACK_ITEM *) yr_malloc(STACK_SIZE * sizeof(STACK_ITEM));
+
+  if (stack == NULL)
+    return ERROR_INSUFICIENT_MEMORY;
+
+  while(!stop)
   {
     switch(*ip)
     {
       case OP_HALT:
-        // When the halt instruction is reached the stack
-        // should be empty.
-        assert(sp == 0);
-        return ERROR_SUCCESS;
+        assert(sp == 0); // When HALT is reached the stack should be empty.
+        stop = TRUE;
+        break;
 
       case OP_PUSH:
         r1.i = *(uint64_t*)(ip + 1);
@@ -214,6 +248,7 @@ int yr_execute_code(
         r1.i = *(uint64_t*)(ip + 1);
         ip += sizeof(uint64_t);
         pop(r2);
+
         if (is_undef(r2))
         {
           r1.i = mem[r1.i];
@@ -228,17 +263,8 @@ int yr_execute_code(
       case OP_JNUNDEF:
         pop(r1);
         push(r1);
-        if (!is_undef(r1))
-        {
-          ip = *(uint8_t**)(ip + 1);
-          // ip will be incremented at the end of the loop,
-          // decrement it here to compensate.
-          ip--;
-        }
-        else
-        {
-          ip += sizeof(uint64_t);
-        }
+
+        ip = jmp_if(!is_undef(r1), ip);
         break;
 
       case OP_JLE:
@@ -247,17 +273,21 @@ int yr_execute_code(
         push(r1);
         push(r2);
 
-        if (r1.i <= r2.i)
-        {
-          ip = *(uint8_t**)(ip + 1);
-          // ip will be incremented at the end of the loop,
-          // decrement it here to compensate.
-          ip--;
-        }
-        else
-        {
-          ip += sizeof(uint64_t);
-        }
+        ip = jmp_if(r1.i <= r2.i, ip);
+        break;
+
+      case OP_JTRUE:
+        pop(r1);
+        push(r1);
+
+        ip = jmp_if(!is_undef(r1) && r1.i, ip);
+        break;
+
+      case OP_JFALSE:
+        pop(r1);
+        push(r1);
+
+        ip = jmp_if(is_undef(r1) || !r1.i, ip);
         break;
 
       case OP_AND:
@@ -368,6 +398,11 @@ int yr_execute_code(
         ip += sizeof(uint64_t);
         r1.i = rule->t_flags[tidx] & RULE_TFLAGS_MATCH ? 1 : 0;
         push(r1);
+        break;
+
+      case OP_INIT_RULE:
+        current_rule = *(YR_RULE**)(ip + 1);
+        ip += sizeof(uint64_t);
         break;
 
       case OP_MATCH_RULE:
@@ -533,7 +568,7 @@ int yr_execute_code(
         }
         else
         {
-          return result;
+          stop = TRUE;
         }
 
         break;
@@ -769,15 +804,14 @@ int yr_execute_code(
           break;
         }
 
-        result = yr_re_exec(
+        r1.i = yr_re_exec(
           (uint8_t*) r2.p,
           (uint8_t*) r1.ss->c_string,
           r1.ss->length,
           RE_FLAGS_SCAN,
           NULL,
-          NULL);
+          NULL) >= 0;
 
-        r1.i = result >= 0;
         push(r1);
         break;
 
@@ -1005,27 +1039,25 @@ int yr_execute_code(
         ensure_defined(r1);
         ensure_defined(r2);
 
-        result = sized_string_cmp(r1.ss, r2.ss);
-
         switch(*ip)
         {
           case OP_STR_EQ:
-            r1.i = (result == 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) == 0);
             break;
           case OP_STR_NEQ:
-            r1.i = (result != 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) != 0);
             break;
           case OP_STR_LT:
-            r1.i = (result < 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) < 0);
             break;
           case OP_STR_LE:
-            r1.i = (result <= 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) <= 0);
             break;
           case OP_STR_GT:
-            r1.i = (result > 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) > 0);
             break;
           case OP_STR_GE:
-            r1.i = (result >= 0);
+            r1.i = (sized_string_cmp(r1.ss, r2.ss) >= 0);
             break;
         }
 
@@ -1044,7 +1076,14 @@ int yr_execute_code(
       if (++cycle == 10)
       {
         if (difftime(time(NULL), start_time) > timeout)
-          return ERROR_SCAN_TIMEOUT;
+        {
+          #ifdef PROFILING_ENABLED
+          assert(current_rule != NULL);
+          current_rule->clock_ticks += clock() - start;
+          #endif
+          result = ERROR_SCAN_TIMEOUT;
+          stop = TRUE;
+        }
 
         cycle = 0;
       }
@@ -1053,8 +1092,6 @@ int yr_execute_code(
     ip++;
   }
 
-  // After executing the code the stack should be empty.
-  assert(sp == 0);
-
-  return ERROR_SUCCESS;
+  yr_free(stack);
+  return result;
 }

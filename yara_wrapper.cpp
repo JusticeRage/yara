@@ -269,7 +269,7 @@ int get_match_data(int message, void* message_data, void* data)
 						{
 							std::stringstream ss;
 							ss << std::hex;
-							for (int i = 0; i < min(20, match->length); i++) {
+							for (int i = 0; i < std::min(20, match->length); i++) {
 								ss << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
 							}
 							if (match->length > 20) {

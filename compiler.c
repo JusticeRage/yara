@@ -48,13 +48,13 @@ YR_API int yr_compiler_create(
   new_compiler->last_result = ERROR_SUCCESS;
   new_compiler->file_stack_ptr = 0;
   new_compiler->file_name_stack_ptr = 0;
-  new_compiler->current_rule_flags = 0;
+  new_compiler->fixup_stack_head = NULL;
   new_compiler->allow_includes = 1;
   new_compiler->loop_depth = 0;
   new_compiler->loop_for_of_mem_offset = -1;
   new_compiler->compiled_rules_arena = NULL;
   new_compiler->namespaces_count = 0;
-  new_compiler->current_rule_strings = NULL;
+  new_compiler->current_rule = NULL;
 
   result = yr_hash_table_create(10007, &new_compiler->rules_table);
 
@@ -130,6 +130,15 @@ YR_API void yr_compiler_destroy(
 
   for (int i = 0; i < compiler->file_name_stack_ptr; i++)
     yr_free(compiler->file_name_stack[i]);
+
+  YR_FIXUP* fixup = compiler->fixup_stack_head;
+
+  while (fixup != NULL)
+  {
+    YR_FIXUP* next_fixup = fixup->next;
+    yr_free(fixup);
+    fixup = next_fixup;
+  }
 
   yr_free(compiler);
 }
