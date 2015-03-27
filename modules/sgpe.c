@@ -30,7 +30,11 @@ along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
 begin_declarations;
 
 declare_integer("ep");
-declare_integer_array("sections");
+declare_integer("num_sections")
+begin_struct_array("sections");
+	declare_integer("start");
+	declare_integer("size");
+end_struct_array("sections");
 
 end_declarations;
 
@@ -59,8 +63,11 @@ int module_load(
 	}
 	sgpe_data* pe_info = (sgpe_data*) module_data;
 	set_integer(pe_info->entrypoint, module_object, "ep");
-	for (i = 0 ; i < pe_info->number_of_sections ; ++i) {
-		set_integer(pe_info->sections[i], module_object, "sections[%i]", i);
+	set_integer(pe_info->number_of_sections, module_object, "num_sections");
+	for (i = 0 ; i < pe_info->number_of_sections ; ++i) 
+	{	
+		set_integer(pe_info->sections[i].section_start, module_object, "sections[%i].start", i);
+		set_integer(pe_info->sections[i].section_size, module_object, "sections[%i].size", i);
 	}
 	return ERROR_SUCCESS;
 }

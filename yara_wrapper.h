@@ -64,9 +64,14 @@ namespace yara {
  *
  *	Using Yara metadata allows me to return more expressive results than simple, alphanumeric rule names.
  *
- *	@param	void* data	A pointer to a pmatch object which will be filled with the matching rules' metadata.
+ *	@param	void* data	A pointer to a pcallback_data object which will be filled with the matching rules' metadata.
  */
 int get_match_data(int message, void* rule, void* data);
+
+/**
+ *	@brief	A callback used to display compiling error and warning for rules.
+ */
+void compiler_callback(int error_level, const char* file_name, int line_number, const char* message, void* user_data);
 
 /**
  *	@brief	An object representing Yara results.

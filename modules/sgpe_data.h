@@ -21,12 +21,20 @@ along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
 #include <stdint.h>
 
 /**
-The object which is passed to the Yara SGPE module.
+ *	@brief	Some summary section information.
+ */
+typedef struct sgpe_section_t {
+	uint32_t	section_start;
+	uint32_t	section_size;
+} sgpe_section;
+
+/**
+	The object which is passed to the Yara SGPE module.
 */
 typedef struct sgpe_data_t {
-	uint32_t	entrypoint;
-	uint32_t*	sections;
-	uint32_t	number_of_sections;
+	uint32_t		entrypoint;
+	sgpe_section*	sections;
+	uint32_t		number_of_sections;
 } sgpe_data;
 
 #endif // !_SGPE_DATA_H

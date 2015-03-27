@@ -120,11 +120,12 @@ bool Yara::load_rules(const std::string& rule_filename)
 		if (yr_compiler_create(&_compiler) != ERROR_SUCCESS) {
 			return false;
 		}
+		yr_compiler_set_callback(_compiler, compiler_callback, NULL);
 		FILE* rule_file = fopen(rule_filename.c_str(), "r");
 		if (rule_file == NULL) {
 			return false;
 		}
-		retval = yr_compiler_add_file(_compiler, rule_file, NULL, NULL);
+		retval = yr_compiler_add_file(_compiler, rule_file, NULL, rule_filename.c_str());
 		if (retval != ERROR_SUCCESS) 
 		{
 			PRINT_ERROR << "Could not compile yara rules." << std::endl;
@@ -221,6 +222,24 @@ const_matches Yara::scan_file(const std::string& path, psgpe_data pe_data)
 
 // ----------------------------------------------------------------------------
 
+void compiler_callback(int error_level, const char* file_name, int line_number, const char* message, void* user_data)
+{
+	if (error_level == YARA_ERROR_LEVEL_ERROR)
+	{
+		PRINT_ERROR << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" << line_number 
+			<< ") : " << message << std::endl;
+	}
+	#ifdef _DEBUG // Warnings are very verbose, do not display them unless this is a debug release.
+		if (error_level == YARA_ERROR_LEVEL_WARNING)
+		{
+			PRINT_WARNING << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" 
+				<< line_number << ") : " << message << std::endl;
+		}
+	#endif // _DEBUG
+}
+
+// ----------------------------------------------------------------------------
+
 int get_match_data(int message, void* message_data, void* data)
 {
 	matches target;
@@ -294,9 +313,14 @@ int get_match_data(int message, void* message_data, void* data)
 			mi = (YR_MODULE_IMPORT*) message_data;
 			if (std::string(mi->module_name) == "sgpe")
 			{
-				if (cb_data->get()->pe_info == NULL)
+				if (!cb_data || cb_data->get()->pe_info == NULL)
 				{
 					PRINT_ERROR << "Yara rule imports the SGPE module, but no SGPE data was given!" << std::endl;
+					return ERROR_CALLBACK_ERROR;
+				}
+				else if (!cb_data) 
+				{
+					PRINT_ERROR << "No data given to the callback to store results!" << std::endl;
 					return ERROR_CALLBACK_ERROR;
 				}
 				mi->module_data = &*(cb_data->get()->pe_info);

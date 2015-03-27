@@ -196,6 +196,9 @@ int yr_execute_code(
     switch(*ip)
     {
       case OP_HALT:
+		if (sp != 0) {
+			printf("Error: Yara is about to crash. This usually happens after upgrades, when using old .yarac filed.\n");
+		}
         assert(sp == 0); // When HALT is reached the stack should be empty.
         stop = TRUE;
         break;
