@@ -20,8 +20,12 @@ limitations under the License.
 #ifdef _MSC_VER
 #include <float.h>
 #define isnan _isnan
+#ifndef INFINITY
 #define INFINITY (DBL_MAX + DBL_MAX)
+#endif
+#ifndef NAN
 #define NAN (INFINITY-INFINITY)
+#endif
 #endif
 
 #include <yara/types.h>
