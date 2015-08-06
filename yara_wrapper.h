@@ -1,18 +1,18 @@
 /*
-    This file is part of Spike Guard.
+    This file is part of Manalyze.
 
-    Spike Guard is free software: you can redistribute it and/or modify
+    Manalyze is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
-    Spike Guard is distributed in the hope that it will be useful,
+    Manalyze is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
+    along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #ifndef _YARA_WRAPPER_H_
@@ -37,7 +37,7 @@
 #include <boost/system/api_config.hpp>
 
 // Contains the definition of the structure used to communicate with the module.
-#include "yara/modules/sgpe_data.h"
+#include "yara/modules/manape_data.h"
 
 extern "C" {
 
@@ -116,10 +116,10 @@ typedef boost::shared_ptr<match_vector > matches;
 typedef boost::shared_ptr<const match_vector > const_matches;
 
 // The structures used to communicate with the callback called by yara.
-typedef boost::shared_ptr<sgpe_data> psgpe_data;
+typedef boost::shared_ptr<manape_data> pmanape_data;
 typedef struct callback_data_t {
 	matches yara_matches;
-	psgpe_data pe_info;
+	pmanape_data pe_info;
 } callback_data;
 typedef boost::shared_ptr<callback_data> pcallback_data;
 
@@ -154,23 +154,23 @@ public:
 	 *	@brief	Tries to match an input file with the currently loaded Yara rules.
 	 *
 	 *	@param	const std::string& path The path to the file to scan.
-	 *	@param	psgpe_data pe_info A structure containing the PE info made available to the SGPE module (@EP, etc.)
+	 *	@param	manape_data pe_info A structure containing the PE info made available to the ManaPE module (@EP, etc.)
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_file(const std::string& path, psgpe_data pe_info);
+	Y_DECLSPEC const_matches scan_file(const std::string& path, pmanape_data pe_info);
 
 	/**
 	*	@brief	Tries to match an input file with the currently loaded Yara rules.
 	*
-	*	Use this function when the SGPE module is not used and no data needs to be passed to it.
+	*	Use this function when the ManaPE module is not used and no data needs to be passed to it.
 	*
 	*	@param	const std::string& path The path to the file to scan.
 	*
 	*	@return	A map containing the rule's metadata for all matching signatures.
 	*/
 	Y_DECLSPEC const_matches scan_file(const std::string& path) {
-		return scan_file(path, psgpe_data());
+		return scan_file(path, pmanape_data());
 	}
 
 	void operator delete(void*);

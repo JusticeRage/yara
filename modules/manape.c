@@ -1,30 +1,30 @@
 /*
-This file is part of Spike Guard.
+This file is part of Manalyze.
 
-Spike Guard is free software: you can redistribute it and/or modify
+Manalyze is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Spike Guard is distributed in the hope that it will be useful,
+Manalyze is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
+along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <yara/modules/sgpe_data.h>
+#include <yara/modules/manape_data.h>
 #include <yara/modules.h>
 
 
 /**
- *	@brief	This module is a replacement for Yara's PE module. SpikeGuard already does all the PE parsing, so there
+ *	@brief	This module is a replacement for Yara's PE module. Manalyze already does all the PE parsing, so there
  *			is little point in bundling another PE parser. This module acts as a gateway between Yara and the data
- *			already parsed by SGPE.
+ *			already parsed by Manalyze.
  */
-#define MODULE_NAME sgpe
+#define MODULE_NAME manape
 
 
 begin_declarations;
@@ -61,11 +61,11 @@ int module_load(
 	if (module_data == NULL) {
 		return ERROR_INVALID_ARGUMENT;
 	}
-	sgpe_data* pe_info = (sgpe_data*) module_data;
+	manape_data* pe_info = (manape_data*) module_data;
 	set_integer(pe_info->entrypoint, module_object, "ep");
 	set_integer(pe_info->number_of_sections, module_object, "num_sections");
-	for (i = 0 ; i < pe_info->number_of_sections ; ++i) 
-	{	
+	for (i = 0 ; i < pe_info->number_of_sections ; ++i)
+	{
 		set_integer(pe_info->sections[i].section_start, module_object, "sections[%i].start", i);
 		set_integer(pe_info->sections[i].section_size, module_object, "sections[%i].size", i);
 	}

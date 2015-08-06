@@ -1,40 +1,40 @@
 /*
-This file is part of Spike Guard.
+This file is part of Manalyze.
 
-Spike Guard is free software: you can redistribute it and/or modify
+Manalyze is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Spike Guard is distributed in the hope that it will be useful,
+Manalyze is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
+along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _SGPE_DATA_H
-#define _SGPE_DATA_H
+#ifndef _MANAPE_DATA_H_
+#define _MANAPE_DATA_H_
 
 #include <stdint.h>
 
 /**
  *	@brief	Some summary section information.
  */
-typedef struct sgpe_section_t {
+typedef struct manape_section_t {
 	uint32_t	section_start;
 	uint32_t	section_size;
-} sgpe_section;
+} manape_section;
 
 /**
-	The object which is passed to the Yara SGPE module.
+	The object which is passed to the Yara ManaPE module.
 */
-typedef struct sgpe_data_t {
+typedef struct manape_data_t {
 	uint32_t		entrypoint;
-	sgpe_section*	sections;
+	manape_section*	sections;
 	uint32_t		number_of_sections;
-} sgpe_data;
+} manape_data;
 
-#endif // !_SGPE_DATA_H
+#endif // !_MANAPE_DATA_H_d

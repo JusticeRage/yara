@@ -1,18 +1,18 @@
 /*
-    This file is part of Spike Guard.
+    This file is part of Manalyze.
 
-    Spike Guard is free software: you can redistribute it and/or modify
+    Manalyze is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
-    Spike Guard is distributed in the hope that it will be useful,
+    Manalyze is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with Spike Guard.  If not, see <http://www.gnu.org/licenses/>.
+    along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "yara_wrapper.h"
@@ -56,7 +56,7 @@ pYara Yara::create() {
 
 void* Yara::operator new(size_t size)
 {
-	void* p = malloc(size); 
+	void* p = malloc(size);
 	if (p == NULL)
 		throw std::bad_alloc();
 	return p;
@@ -105,7 +105,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		retval = yr_rules_load(rule_filename.c_str(), &_rules);
 	}
 
-	
+
 	if (retval != ERROR_SUCCESS && retval != ERROR_INVALID_FILE)
 	{
 		PRINT_ERROR << "Could not load yara rules. (Yara Error 0x" << std::hex << retval << ")" << std::endl;
@@ -126,7 +126,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 			return false;
 		}
 		retval = yr_compiler_add_file(_compiler, rule_file, NULL, rule_filename.c_str());
-		if (retval != ERROR_SUCCESS) 
+		if (retval != ERROR_SUCCESS)
 		{
 			PRINT_ERROR << "Could not compile yara rules." << std::endl;
 			goto END;
@@ -193,18 +193,18 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_file(const std::string& path, psgpe_data pe_data)
+const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data)
 {
 	pcallback_data cb_data(new callback_data);
 	cb_data->yara_matches = matches(new match_vector());
 	cb_data->pe_info = pe_data;
 	int retval;
-	if (_rules == NULL)	
+	if (_rules == NULL)
 	{
 		PRINT_ERROR << "No Yara rules loaded!" << std::endl;
 		return cb_data->yara_matches;
 	}
-	
+
 	retval = yr_rules_scan_file(_rules,
 						        path.c_str(),
                                 SCAN_FLAGS_PROCESS_MEMORY,
@@ -226,13 +226,13 @@ void compiler_callback(int error_level, const char* file_name, int line_number, 
 {
 	if (error_level == YARA_ERROR_LEVEL_ERROR)
 	{
-		PRINT_ERROR << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" << line_number 
+		PRINT_ERROR << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" << line_number
 			<< ") : " << message << std::endl;
 	}
 	#ifdef _DEBUG // Warnings are very verbose, do not display them unless this is a debug release.
 		if (error_level == YARA_ERROR_LEVEL_WARNING)
 		{
-			PRINT_WARNING << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" 
+			PRINT_WARNING << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "("
 				<< line_number << ") : " << message << std::endl;
 		}
 	#endif // _DEBUG
@@ -249,7 +249,7 @@ int get_match_data(int message, void* message_data, void* data)
 	pMatch m;
 	YR_MODULE_IMPORT* mi = NULL; // Used for the CALLBACK_MSG_IMPORT_MODULE message.
 	pcallback_data* cb_data = (pcallback_data*) data;
-	if (!cb_data) 
+	if (!cb_data)
 	{
 		PRINT_ERROR << "Yara wrapper callback called with no data!" << std::endl;
 		return ERROR_CALLBACK_ERROR;
@@ -308,17 +308,17 @@ int get_match_data(int message, void* message_data, void* data)
 		case CALLBACK_MSG_RULE_NOT_MATCHING:
 			return CALLBACK_CONTINUE;
 
-		// Detect when the SGPE module is loaded
+		// Detect when the ManaPE module is loaded
 		case CALLBACK_MSG_IMPORT_MODULE:
 			mi = (YR_MODULE_IMPORT*) message_data;
-			if (std::string(mi->module_name) == "sgpe")
+			if (std::string(mi->module_name) == "manape")
 			{
 				if (!cb_data || cb_data->get()->pe_info == NULL)
 				{
-					PRINT_ERROR << "Yara rule imports the SGPE module, but no SGPE data was given!" << std::endl;
+					PRINT_ERROR << "Yara rule imports the ManaPE module, but no ManaPE data was given!" << std::endl;
 					return ERROR_CALLBACK_ERROR;
 				}
-				else if (!cb_data) 
+				else if (!cb_data)
 				{
 					PRINT_ERROR << "No data given to the callback to store results!" << std::endl;
 					return ERROR_CALLBACK_ERROR;
