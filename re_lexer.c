@@ -517,7 +517,7 @@ limitations under the License.
 #include <yara/strutils.h>
 
 
-#ifdef _WIN32
+#ifdef _WIN32 && !defined(snprintf)
 #define snprintf _snprintf
 #endif
 

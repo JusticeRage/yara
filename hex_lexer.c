@@ -488,7 +488,7 @@ limitations under the License.
 
 #include "hex_grammar.h"
 
-#ifdef _WIN32
+#ifdef _WIN32 && !defined(snprintf)
 #define snprintf _snprintf
 #endif
 

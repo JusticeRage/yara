@@ -688,7 +688,7 @@ limitations under the License.
     str->flags = 0; \
   } \
 
-#ifdef _WIN32
+#ifdef _WIN32 && !defined(snprintf)
 #define snprintf _snprintf
 #endif
 
