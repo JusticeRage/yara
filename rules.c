@@ -36,7 +36,7 @@ limitations under the License.
 #include <yara/scan.h>
 #include <yara/modules.h>
 
-
+#include "exception.h"
 
 void _yr_rules_lock(
     YR_RULES* rules)
@@ -168,27 +168,35 @@ YR_API int yr_rules_define_string_variable(
 
 
 void _yr_rules_clean_matches(
-    YR_RULES* rules)
+    YR_RULES* rules,
+    YR_SCAN_CONTEXT* context)
 {
   YR_RULE* rule;
-  YR_STRING* string;
 
-  int tidx = yr_get_tidx();
+  int tidx = context->tidx;
 
   yr_rules_foreach(rules, rule)
   {
     rule->t_flags[tidx] &= ~RULE_TFLAGS_MATCH;
     rule->ns->t_flags[tidx] &= ~NAMESPACE_TFLAGS_UNSATISFIED_GLOBAL;
+  }
 
-    yr_rule_strings_foreach(rule, string)
-    {
-      string->matches[tidx].count = 0;
-      string->matches[tidx].head = NULL;
-      string->matches[tidx].tail = NULL;
-      string->unconfirmed_matches[tidx].count = 0;
-      string->unconfirmed_matches[tidx].head = NULL;
-      string->unconfirmed_matches[tidx].tail = NULL;
-    }
+  YR_STRING** string = (YR_STRING**) yr_arena_base_address(
+      context->matching_strings_arena);
+
+  while (string != NULL)
+  {
+    (*string)->matches[tidx].count = 0;
+    (*string)->matches[tidx].head = NULL;
+    (*string)->matches[tidx].tail = NULL;
+    (*string)->unconfirmed_matches[tidx].count = 0;
+    (*string)->unconfirmed_matches[tidx].head = NULL;
+    (*string)->unconfirmed_matches[tidx].tail = NULL;
+
+    string = (YR_STRING**) yr_arena_next_address(
+        context->matching_strings_arena,
+        string,
+        sizeof(string));
   }
 }
 
@@ -225,22 +233,17 @@ void yr_rules_print_profiling_info(
 #endif
 
 
-int yr_rules_scan_mem_block(
+int _yr_rules_scan_mem_block(
     YR_RULES* rules,
     YR_MEMORY_BLOCK* block,
-    int flags,
+    YR_SCAN_CONTEXT* context,
     int timeout,
-    time_t start_time,
-    YR_ARENA* matches_arena)
+    time_t start_time)
 {
-  YR_AC_STATE* next_state;
   YR_AC_MATCH* ac_match;
-  YR_AC_STATE* current_state;
+  YR_AC_STATE* current_state = rules->automaton->root;
 
-  size_t i;
-
-  current_state = rules->automaton->root;
-  i = 0;
+  size_t i = 0;
 
   while (i < block->size)
   {
@@ -251,19 +254,18 @@ int yr_rules_scan_mem_block(
       if (ac_match->backtrack <= i)
       {
         FAIL_ON_ERROR(yr_scan_verify_match(
+            context,
             ac_match,
             block->data,
             block->size,
             block->base,
-            i - ac_match->backtrack,
-            matches_arena,
-            flags));
+            i - ac_match->backtrack));
       }
 
       ac_match = ac_match->next;
     }
 
-    next_state = yr_ac_next_state(current_state, block->data[i]);
+    YR_AC_STATE* next_state = yr_ac_next_state(current_state, block->data[i]);
 
     while (next_state == NULL && current_state->depth > 0)
     {
@@ -290,13 +292,12 @@ int yr_rules_scan_mem_block(
     if (ac_match->backtrack <= block->size)
     {
       FAIL_ON_ERROR(yr_scan_verify_match(
+          context,
           ac_match,
           block->data,
           block->size,
           block->base,
-          block->size - ac_match->backtrack,
-          matches_arena,
-          flags));
+          block->size - ac_match->backtrack));
     }
 
     ac_match = ac_match->next;
@@ -315,32 +316,16 @@ YR_API int yr_rules_scan_mem_blocks(
     int timeout)
 {
   YR_SCAN_CONTEXT context;
-  YR_RULE* rule;
-  YR_OBJECT* object;
-  YR_EXTERNAL_VARIABLE* external;
-  YR_ARENA* matches_arena = NULL;
 
-  time_t start_time;
-  tidx_mask_t bit;
-
-  int message;
-  int tidx = 0;
   int result = ERROR_SUCCESS;
 
   if (block == NULL)
     return ERROR_SUCCESS;
 
-  context.flags = flags;
-  context.callback = callback;
-  context.user_data = user_data;
-  context.file_size = block->size;
-  context.mem_block = block;
-  context.entry_point = UNDEFINED;
-  context.objects_table = NULL;
-
   _yr_rules_lock(rules);
 
-  bit = 1;
+  int tidx = 0;
+  tidx_mask_t bit = 1;
 
   while (rules->tidx_mask & bit)
   {
@@ -358,9 +343,25 @@ YR_API int yr_rules_scan_mem_blocks(
   if (result != ERROR_SUCCESS)
     return result;
 
+  context.tidx = tidx;
+  context.flags = flags;
+  context.callback = callback;
+  context.user_data = user_data;
+  context.file_size = block->size;
+  context.mem_block = block;
+  context.entry_point = UNDEFINED;
+  context.objects_table = NULL;
+  context.matches_arena = NULL;
+  context.matching_strings_arena = NULL;
+
   yr_set_tidx(tidx);
 
-  result = yr_arena_create(1024, 0, &matches_arena);
+  result = yr_arena_create(1024, 0, &context.matches_arena);
+
+  if (result != ERROR_SUCCESS)
+    goto _exit;
+
+  result = yr_arena_create(8, 0, &context.matching_strings_arena);
 
   if (result != ERROR_SUCCESS)
     goto _exit;
@@ -370,10 +371,12 @@ YR_API int yr_rules_scan_mem_blocks(
   if (result != ERROR_SUCCESS)
     goto _exit;
 
-  external = rules->externals_list_head;
+  YR_EXTERNAL_VARIABLE* external = rules->externals_list_head;
 
   while (!EXTERNAL_VARIABLE_IS_NULL(external))
   {
+    YR_OBJECT* object;
+
     result = yr_object_from_external_variable(
         external,
         &object);
@@ -391,30 +394,35 @@ YR_API int yr_rules_scan_mem_blocks(
     external++;
   }
 
-  start_time = time(NULL);
+  time_t start_time = time(NULL);
 
   while (block != NULL)
   {
     if (context.entry_point == UNDEFINED)
     {
-      if (flags & SCAN_FLAGS_PROCESS_MEMORY)
-        context.entry_point = yr_get_entry_point_address(
-            block->data,
-            block->size,
-            block->base);
-      else
-        context.entry_point = yr_get_entry_point_offset(
-            block->data,
-            block->size);
+      YR_TRYCATCH({
+          if (flags & SCAN_FLAGS_PROCESS_MEMORY)
+            context.entry_point = yr_get_entry_point_address(
+                block->data,
+                block->size,
+                block->base);
+          else
+            context.entry_point = yr_get_entry_point_offset(
+                block->data,
+                block->size);
+        },{});
     }
 
-    result = yr_rules_scan_mem_block(
-        rules,
-        block,
-        flags,
-        timeout,
-        start_time,
-        matches_arena);
+    YR_TRYCATCH({
+        result = _yr_rules_scan_mem_block(
+            rules,
+            block,
+            &context,
+            timeout,
+            start_time);
+      },{
+        result = ERROR_COULD_NOT_MAP_FILE;
+      });
 
     if (result != ERROR_SUCCESS)
       goto _exit;
@@ -422,14 +430,20 @@ YR_API int yr_rules_scan_mem_blocks(
     block = block->next;
   }
 
-  result = yr_execute_code(
-      rules,
-      &context,
-      timeout,
-      start_time);
+  YR_TRYCATCH({
+      result = yr_execute_code(
+          rules,
+          &context,
+          timeout,
+          start_time);
+    },{
+      result = ERROR_COULD_NOT_MAP_FILE;
+    });
 
   if (result != ERROR_SUCCESS)
     goto _exit;
+
+  YR_RULE* rule;
 
   yr_rules_foreach(rules, rule)
   {
@@ -441,6 +455,8 @@ YR_API int yr_rules_scan_mem_blocks(
 
   yr_rules_foreach(rules, rule)
   {
+    int message;
+
     if (rule->t_flags[tidx] & RULE_TFLAGS_MATCH &&
         !(rule->ns->t_flags[tidx] & NAMESPACE_TFLAGS_UNSATISFIED_GLOBAL))
     {
@@ -470,16 +486,18 @@ YR_API int yr_rules_scan_mem_blocks(
 
 _exit:
 
-  #if PRINT_MODULE_DATA
-  yr_modules_print_data(&context);
-  #endif
+  _yr_rules_clean_matches(rules, &context);
+
+  if (flags & SCAN_FLAGS_SHOW_MODULE_DATA)
+    yr_modules_print_data(&context);
 
   yr_modules_unload_all(&context);
 
-  _yr_rules_clean_matches(rules);
+  if (context.matches_arena != NULL)
+    yr_arena_destroy(context.matches_arena);
 
-  if (matches_arena != NULL)
-    yr_arena_destroy(matches_arena);
+  if (context.matching_strings_arena != NULL)
+    yr_arena_destroy(context.matching_strings_arena);
 
   if (context.objects_table != NULL)
     yr_hash_table_destroy(
@@ -552,6 +570,35 @@ YR_API int yr_rules_scan_file(
   return result;
 }
 
+YR_API int yr_rules_scan_fd(
+    YR_RULES* rules,
+    YR_FILE_DESCRIPTOR fd,
+    int flags,
+    YR_CALLBACK_FUNC callback,
+    void* user_data,
+    int timeout)
+{
+  YR_MAPPED_FILE mfile;
+  int result;
+
+  result = yr_filemap_map_fd(fd, 0, 0, &mfile);
+
+  if (result == ERROR_SUCCESS)
+  {
+    result = yr_rules_scan_mem(
+        rules,
+        mfile.data,
+        mfile.size,
+        flags,
+        callback,
+        user_data,
+        timeout);
+
+    yr_filemap_unmap(&mfile);
+  }
+
+  return result;
+}
 
 YR_API int yr_rules_scan_proc(
     YR_RULES* rules,
@@ -647,10 +694,10 @@ YR_API int yr_rules_load(
   if (fh == NULL)
     return ERROR_COULD_NOT_OPEN_FILE;
 
-  YR_STREAM stream = {
-    .user_data = fh,
-    .read = (YR_STREAM_READ_FUNC) fread
-  };
+  YR_STREAM stream;
+
+  stream.user_data = fh;
+  stream.read = (YR_STREAM_READ_FUNC) fread;
 
   int result = yr_rules_load_stream(&stream, rules);
 
@@ -677,10 +724,10 @@ YR_API int yr_rules_save(
   if (fh == NULL)
     return ERROR_COULD_NOT_OPEN_FILE;
 
-  YR_STREAM stream = {
-    .user_data = fh,
-    .write = (YR_STREAM_WRITE_FUNC) fwrite,
-  };
+  YR_STREAM stream;
+
+  stream.user_data = fh;
+  stream.write = (YR_STREAM_WRITE_FUNC) fwrite;
 
   int result = yr_rules_save_stream(rules, &stream);
 

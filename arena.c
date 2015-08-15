@@ -98,7 +98,7 @@ YR_ARENA_PAGE* _yr_arena_new_page(
 //
 // _yr_arena_page_for_address
 //
-// Returns the page within he arena where an address reside.
+// Returns the page within the arena where an address reside.
 //
 // Args:
 //    YR_ARENA* arena   - Pointer to the arena
@@ -176,6 +176,7 @@ int _yr_arena_make_relocatable(
 
   while (offset != -1)
   {
+    assert(page->used >= sizeof(int64_t));
     assert(base_offset + offset <= page->used - sizeof(int64_t));
 
     reloc = (YR_RELOC*) yr_malloc(sizeof(YR_RELOC));
@@ -302,12 +303,16 @@ void yr_arena_destroy(
 //    YR_ARENA* arena  - Pointer to the arena.
 //
 // Returns:
-//    A pointer
+//    A pointer to the arena's data. NULL if the no data has been written to
+//    the arena yet.
 //
 
 void* yr_arena_base_address(
   YR_ARENA* arena)
 {
+  if (arena->page_list_head->used == 0)
+    return NULL;
+
   return arena->page_list_head->address;
 }
 
@@ -912,7 +917,10 @@ int yr_arena_load_stream(
     return ERROR_INVALID_FILE;
   }
 
-  if (header.version > ARENA_FILE_VERSION)
+  if (header.size < 2048)       // compiled rules are always larger than 2KB
+    return ERROR_CORRUPT_FILE;
+
+  if (header.version != ARENA_FILE_VERSION)
     return ERROR_UNSUPPORTED_FILE_VERSION;
 
   result = yr_arena_create(header.size, 0, &new_arena);
@@ -938,6 +946,12 @@ int yr_arena_load_stream(
 
   while (reloc_offset != -1)
   {
+    if (reloc_offset > header.size - sizeof(uint8_t*))
+    {
+      yr_arena_destroy(new_arena);
+      return ERROR_CORRUPT_FILE;
+    }
+
     yr_arena_make_relocatable(new_arena, page->address, reloc_offset, EOL);
 
     reloc_address = (uint8_t**) (page->address + reloc_offset);

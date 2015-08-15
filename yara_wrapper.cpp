@@ -105,8 +105,12 @@ bool Yara::load_rules(const std::string& rule_filename)
 		retval = yr_rules_load(rule_filename.c_str(), &_rules);
 	}
 
+	// Yara rules compiled with a previous Yara version. Delete and recompile.
+	if (retval == ERROR_UNSUPPORTED_FILE_VERSION) {
+		boost::filesystem::remove(rule_filename + "c");
+	}
 
-	if (retval != ERROR_SUCCESS && retval != ERROR_INVALID_FILE)
+	if (retval != ERROR_SUCCESS && retval != ERROR_INVALID_FILE && retval != ERROR_UNSUPPORTED_FILE_VERSION)
 	{
 		PRINT_ERROR << "Could not load yara rules. (Yara Error 0x" << std::hex << retval << ")" << std::endl;
 		return false;
@@ -115,7 +119,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 	if (retval == ERROR_SUCCESS) {
 		return true;
 	}
-	else if (retval == ERROR_INVALID_FILE) // Uncompiled rules
+	else if (retval == ERROR_INVALID_FILE || retval == ERROR_UNSUPPORTED_FILE_VERSION) // Uncompiled rules
 	{
 		if (yr_compiler_create(&_compiler) != ERROR_SUCCESS) {
 			return false;

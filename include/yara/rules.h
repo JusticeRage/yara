@@ -14,12 +14,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 #ifndef YR_RULES_H
 #define YR_RULES_H
 
 #include <yara/types.h>
 #include <yara/utils.h>
+#include <yara/filemap.h>
 
 
 #define CALLBACK_MSG_RULE_MATCHING              1
@@ -68,6 +68,15 @@ YR_API int yr_rules_scan_mem(
 YR_API int yr_rules_scan_file(
     YR_RULES* rules,
     const char* filename,
+    int flags,
+    YR_CALLBACK_FUNC callback,
+    void* user_data,
+    int timeout);
+
+
+YR_API int yr_rules_scan_fd(
+    YR_RULES* rules,
+    YR_FILE_DESCRIPTOR fd,
     int flags,
     YR_CALLBACK_FUNC callback,
     void* user_data,

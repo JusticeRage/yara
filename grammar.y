@@ -78,7 +78,7 @@ limitations under the License.
 %}
 
 
-%expect 2   // expect 2 shift/reduce conflicts
+%expect 1   // expect 1 shift/reduce conflicts
 
 %debug
 %name-prefix="yara_yy"
@@ -88,6 +88,7 @@ limitations under the License.
 %lex-param {yyscan_t yyscanner}
 %lex-param {YR_COMPILER* compiler}
 
+%token _DOT_DOT_
 %token _RULE_
 %token _PRIVATE_
 %token _GLOBAL_
@@ -98,6 +99,7 @@ limitations under the License.
 %token <c_string> _STRING_IDENTIFIER_
 %token <c_string> _STRING_COUNT_
 %token <c_string> _STRING_OFFSET_
+%token <c_string> _STRING_LENGTH_
 %token <c_string> _STRING_IDENTIFIER_WITH_WILDCARD_
 %token <integer> _NUMBER_
 %token <double_> _DOUBLE_
@@ -165,13 +167,14 @@ limitations under the License.
 %type <expression> identifier
 %type <expression> regexp
 
+%type <c_string> arguments
 %type <c_string> arguments_list
 
-
 %destructor { yr_free($$); } _IDENTIFIER_
-%destructor { yr_free($$); } _STRING_IDENTIFIER_
 %destructor { yr_free($$); } _STRING_COUNT_
 %destructor { yr_free($$); } _STRING_OFFSET_
+%destructor { yr_free($$); } _STRING_LENGTH_
+%destructor { yr_free($$); } _STRING_IDENTIFIER_
 %destructor { yr_free($$); } _STRING_IDENTIFIER_WITH_WILDCARD_
 %destructor { yr_free($$); } _TEXT_STRING_
 %destructor { yr_free($$); } _HEX_STRING_
@@ -226,7 +229,7 @@ rule
 
         ERROR_IF(rule == NULL);
 
-        $$ = rule;
+        $<rule>$ = rule;
       }
       condition '}'
       {
@@ -728,7 +731,7 @@ identifier
         ERROR_IF(compiler->last_result != ERROR_SUCCESS);
       }
 
-    | identifier '(' arguments_list ')'
+    | identifier '(' arguments ')'
       {
         char* args_fmt;
 
@@ -774,12 +777,13 @@ identifier
     ;
 
 
+arguments
+    : /* empty */     { $$ = yr_strdup(""); }
+    | arguments_list  { $$ = $1; }
+
+
 arguments_list
-    : /* empty */
-      {
-        $$ = yr_strdup("");
-      }
-    | expression
+    : expression
       {
         $$ = (char*) yr_malloc(MAX_FUNCTION_ARGS + 1);
 
@@ -1252,7 +1256,7 @@ expression
         ERROR_IF(compiler->last_result != ERROR_SUCCESS);
 
         // create a fixup entry for the jump and push it in the stack
-        YR_FIXUP* fixup = yr_malloc(sizeof(YR_FIXUP));
+        YR_FIXUP* fixup = (YR_FIXUP*) yr_malloc(sizeof(YR_FIXUP));
 
         if (fixup == NULL)
           compiler->last_error = ERROR_INSUFICIENT_MEMORY;
@@ -1311,7 +1315,7 @@ expression
 
         ERROR_IF(compiler->last_result != ERROR_SUCCESS);
 
-        YR_FIXUP* fixup = yr_malloc(sizeof(YR_FIXUP));
+        YR_FIXUP* fixup = (YR_FIXUP*) yr_malloc(sizeof(YR_FIXUP));
 
         if (fixup == NULL)
           compiler->last_error = ERROR_INSUFICIENT_MEMORY;
@@ -1429,7 +1433,7 @@ integer_set
 
 
 range
-    : '(' primary_expression '.' '.'  primary_expression ')'
+    : '(' primary_expression _DOT_DOT_  primary_expression ')'
       {
         if ($2.type != EXPRESSION_TYPE_INTEGER)
         {
@@ -1438,7 +1442,7 @@ range
           compiler->last_result = ERROR_WRONG_TYPE;
         }
 
-        if ($5.type != EXPRESSION_TYPE_INTEGER)
+        if ($4.type != EXPRESSION_TYPE_INTEGER)
         {
           yr_compiler_set_error_extra_info(
               compiler, "wrong type for range's upper bound");
@@ -1666,6 +1670,44 @@ primary_expression
         $$.type = EXPRESSION_TYPE_INTEGER;
         $$.value.integer = UNDEFINED;
       }
+    | _STRING_LENGTH_ '[' primary_expression ']'
+      {
+        compiler->last_result = yr_parser_reduce_string_identifier(
+            yyscanner,
+            $1,
+            OP_LENGTH,
+            UNDEFINED);
+
+        yr_free($1);
+
+        ERROR_IF(compiler->last_result != ERROR_SUCCESS);
+
+        $$.type = EXPRESSION_TYPE_INTEGER;
+        $$.value.integer = UNDEFINED;
+      }
+    | _STRING_LENGTH_
+      {
+        compiler->last_result = yr_parser_emit_with_arg(
+            yyscanner,
+            OP_PUSH,
+            1,
+            NULL,
+            NULL);
+
+        if (compiler->last_result == ERROR_SUCCESS)
+          compiler->last_result = yr_parser_reduce_string_identifier(
+              yyscanner,
+              $1,
+              OP_LENGTH,
+              UNDEFINED);
+
+        yr_free($1);
+
+        ERROR_IF(compiler->last_result != ERROR_SUCCESS);
+
+        $$.type = EXPRESSION_TYPE_INTEGER;
+        $$.value.integer = UNDEFINED;
+      }
     | identifier
       {
         if ($1.type == EXPRESSION_TYPE_INTEGER)  // loop identifier
@@ -1793,8 +1835,16 @@ primary_expression
         if ($1.type == EXPRESSION_TYPE_INTEGER &&
             $3.type == EXPRESSION_TYPE_INTEGER)
         {
-          $$.value.integer = OPERATION(/, $1.value.integer, $3.value.integer);
-          $$.type = EXPRESSION_TYPE_INTEGER;
+          if ($3.value.integer != 0)
+          {
+            $$.value.integer = OPERATION(/, $1.value.integer, $3.value.integer);
+            $$.type = EXPRESSION_TYPE_INTEGER;
+          }
+          else
+          {
+            compiler->last_result = ERROR_DIVISION_BY_ZERO;
+            ERROR_IF(compiler->last_result != ERROR_SUCCESS);
+          }
         }
         else
         {
@@ -1808,8 +1858,16 @@ primary_expression
 
         yr_parser_emit(yyscanner, OP_MOD, NULL);
 
-        $$.type = EXPRESSION_TYPE_INTEGER;
-        $$.value.integer = OPERATION(%, $1.value.integer, $3.value.integer);
+        if ($3.value.integer != 0)
+        {
+          $$.value.integer = OPERATION(%, $1.value.integer, $3.value.integer);
+          $$.type = EXPRESSION_TYPE_INTEGER;
+        }
+        else
+        {
+          compiler->last_result = ERROR_DIVISION_BY_ZERO;
+          ERROR_IF(compiler->last_result != ERROR_SUCCESS);
+        }
       }
     | primary_expression '^' primary_expression
       {

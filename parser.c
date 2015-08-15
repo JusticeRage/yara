@@ -463,6 +463,13 @@ YR_STRING* yr_parser_reduce_string_declaration(
 
   RE_ERROR re_error;
 
+  if (str->length == 0)
+  {
+    compiler->last_result = ERROR_EMPTY_STRING;
+    yr_compiler_set_error_extra_info(compiler, identifier);
+    goto _exit;
+  }
+
   if (str->flags & SIZED_STRING_FLAGS_NO_CASE)
     string_flags |= STRING_GFLAGS_NO_CASE;
 
@@ -523,6 +530,27 @@ YR_STRING* yr_parser_reduce_string_declaration(
 
     if (re->flags & RE_FLAGS_FAST_HEX_REGEXP)
       string_flags |= STRING_GFLAGS_FAST_HEX_REGEXP;
+
+    // Regular expressions in the strings section can't mix greedy and ungreedy
+    // quantifiers like .* and .*?. That's because these regular expressions can
+    // be matched forwards and/or backwards depending on the atom found, and we
+    // need the regexp to be all-greedy or all-ungreedy to be able to properly
+    // calculate the length of the match.
+
+    if ((re->flags & RE_FLAGS_GREEDY) &&
+        (re->flags & RE_FLAGS_UNGREEDY))
+    {
+      compiler->last_result = ERROR_INVALID_REGULAR_EXPRESSION;
+
+      yr_compiler_set_error_extra_info(compiler,
+          "greedy and ungreedy quantifiers can't be mixed in a regular "
+          "expression");
+
+      goto _exit;
+    }
+
+    if (re->flags & RE_FLAGS_GREEDY)
+      string_flags |= STRING_GFLAGS_GREEDY_REGEXP;
 
     if (yr_re_contains_dot_star(re))
     {

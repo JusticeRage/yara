@@ -24,7 +24,9 @@ limitations under the License.
 #include "config.h"
 
 #ifdef _WIN32
-#define snprintf _snprintf
+# if !defined(snprintf) && _MSC_VER < 1900
+#  define snprintf _snprintf
+# endif
 #define strcasecmp _stricmp
 #define strncasecmp _strnicmp
 #endif
