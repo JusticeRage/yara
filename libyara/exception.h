@@ -24,9 +24,6 @@ limitations under the License.
 #include <windows.h>
 #include <setjmp.h>
 
-#define YR_EXCEPT(_try_clause_, _catch_clause_) \
-    _try_clause_
-
 jmp_buf *exc_jmp_buf[MAX_THREADS];
 
 static LONG CALLBACK exception_handler(
@@ -50,10 +47,10 @@ static LONG CALLBACK exception_handler(
 #define YR_TRYCATCH(_try_clause_, _catch_clause_)                       \
   do                                                                    \
   {                                                                     \
+    jmp_buf jb;                                                         \
     HANDLE exh = AddVectoredExceptionHandler(1, exception_handler);     \
     int tidx = yr_get_tidx();                                           \
     assert(tidx != -1);                                                 \
-    jmp_buf jb;                                                         \
     exc_jmp_buf[tidx] = &jb;                                            \
     if (setjmp(jb) == 0)                                                \
       { _try_clause_ }                                                  \

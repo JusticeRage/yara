@@ -184,7 +184,7 @@ int _yr_arena_make_relocatable(
     if (reloc == NULL)
       return ERROR_INSUFICIENT_MEMORY;
 
-    reloc->offset = base_offset + offset;
+    reloc->offset = (uint32_t) (base_offset + offset);
     reloc->next = NULL;
 
     if (page->reloc_list_head == NULL)
@@ -340,7 +340,7 @@ void* yr_arena_base_address(
 void* yr_arena_next_address(
   YR_ARENA* arena,
   void* address,
-  int offset)
+  size_t offset)
 {
   YR_ARENA_PAGE* page;
 
@@ -410,7 +410,7 @@ int yr_arena_coalesce(
 
   uint8_t** reloc_address;
   uint8_t* reloc_target;
-  int total_size = 0;
+  size_t total_size = 0;
 
   page = arena->page_list_head;
 
@@ -438,7 +438,7 @@ int yr_arena_coalesce(
 
     while(reloc != NULL)
     {
-      reloc->offset += big_page->used;
+      reloc->offset += (uint32_t) big_page->used;
       reloc = reloc->next;
     }
 
@@ -900,7 +900,7 @@ int yr_arena_load_stream(
   YR_ARENA* new_arena;
   ARENA_FILE_HEADER header;
 
-  int32_t reloc_offset;
+  uint32_t reloc_offset;
   uint8_t** reloc_address;
   uint8_t* reloc_target;
 
@@ -944,7 +944,7 @@ int yr_arena_load_stream(
     return ERROR_CORRUPT_FILE;
   }
 
-  while (reloc_offset != -1)
+  while (reloc_offset != 0xFFFFFFFF)
   {
     if (reloc_offset > header.size - sizeof(uint8_t*))
     {
@@ -997,7 +997,7 @@ int yr_arena_save_stream(
   YR_RELOC* reloc;
   ARENA_FILE_HEADER header;
 
-  int32_t end_marker = -1;
+  uint32_t end_marker = 0xFFFFFFFF;
   uint8_t** reloc_address;
   uint8_t* reloc_target;
 
@@ -1027,11 +1027,13 @@ int yr_arena_save_stream(
     reloc = reloc->next;
   }
 
+  assert(page->size < 0x100000000);  // 4GB
+
   header.magic[0] = 'Y';
   header.magic[1] = 'A';
   header.magic[2] = 'R';
   header.magic[3] = 'A';
-  header.size = page->size;
+  header.size = (int32_t) page->size;
   header.version = ARENA_FILE_VERSION;
 
   yr_stream_write(&header, sizeof(header), 1, stream);

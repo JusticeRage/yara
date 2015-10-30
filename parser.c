@@ -198,7 +198,9 @@ int yr_parser_check_types(
     YR_OBJECT_FUNCTION* function,
     const char* actual_args_fmt)
 {
-  for (int i = 0; i < MAX_OVERLOADED_FUNCTIONS; i++)
+  int i;
+
+  for (i = 0; i < MAX_OVERLOADED_FUNCTIONS; i++)
   {
     if (function->prototypes[i].arguments_fmt == NULL)
       break;
@@ -351,7 +353,7 @@ int _yr_parser_write_string(
 
   if (flags & STRING_GFLAGS_LITERAL)
   {
-    (*string)->length = literal_string->length;
+    (*string)->length = (uint32_t) literal_string->length;
 
     result = yr_arena_write_data(
         compiler->sz_arena,
@@ -363,7 +365,7 @@ int _yr_parser_write_string(
     {
       result = yr_atoms_extract_from_string(
           (uint8_t*) literal_string->c_string,
-          literal_string->length,
+          (int32_t) literal_string->length,
           flags,
           &atom_list);
     }
@@ -732,6 +734,9 @@ YR_RULE* yr_parser_reduce_rule_declaration_phase_1(
       identifier,
       (char**) &rule->identifier);
 
+  if (compiler->last_result != ERROR_SUCCESS)
+    return NULL;
+
   compiler->last_result = yr_parser_emit_with_arg_reloc(
       yyscanner,
       OP_INIT_RULE,
@@ -906,7 +911,7 @@ YR_META* yr_parser_reduce_meta_declaration(
     int32_t type,
     const char* identifier,
     const char* string,
-    int32_t integer)
+    int64_t integer)
 {
   YR_COMPILER* compiler = yyget_extra(yyscanner);
   YR_META* meta;
@@ -1012,7 +1017,7 @@ int _yr_parser_operator_to_opcode(
     const char* op,
     int expression_type)
 {
-  int opcode;
+  int opcode = 0;
 
   switch(expression_type)
   {

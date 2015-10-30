@@ -32,6 +32,9 @@ limitations under the License.
 
 #define YYERROR_VERBOSE
 
+#define YYMALLOC yr_malloc
+#define YYFREE yr_free
+
 #define mark_as_not_fast_hex_regexp() \
     ((RE*) yyget_extra(yyscanner))->flags &= ~RE_FLAGS_FAST_HEX_REGEXP
 
@@ -62,7 +65,7 @@ limitations under the License.
 %lex-param {HEX_LEX_ENVIRONMENT *lex_env}
 
 %union {
-  int integer;
+  int64_t integer;
   RE_NODE *re_node;
 }
 
@@ -112,6 +115,10 @@ tokens
       }
     | token token_sequence token
       {
+        RE_NODE* new_concat;
+        RE_NODE* leftmost_concat = NULL;
+        RE_NODE* leftmost_node = $2;
+
         $$ = NULL;
 
         /*
@@ -136,16 +143,13 @@ tokens
         leftmost node of the token_sequence subtree.
         */
 
-        RE_NODE* leftmost_concat = NULL;
-        RE_NODE* leftmost_node = $2;
-
         while (leftmost_node->type == RE_NODE_CONCAT)
         {
           leftmost_concat = leftmost_node;
           leftmost_node = leftmost_node->left;
         }
 
-        RE_NODE* new_concat = yr_re_node_create(
+        new_concat = yr_re_node_create(
             RE_NODE_CONCAT, $1, leftmost_node);
 
         if (new_concat != NULL)
@@ -253,8 +257,8 @@ range
 
         ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
 
-        $$->start = $2;
-        $$->end = $2;
+        $$->start = (int) $2;
+        $$->end = (int) $2;
       }
     | '[' _NUMBER_ '-' _NUMBER_ ']'
       {
@@ -291,8 +295,8 @@ range
 
         ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
 
-        $$->start = $2;
-        $$->end = $4;
+        $$->start = (int) $2;
+        $$->end = (int) $4;
       }
     | '[' _NUMBER_ '-' ']'
       {
@@ -319,7 +323,7 @@ range
 
         ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
 
-        $$->start = $2;
+        $$->start = (int) $2;
         $$->end = INT_MAX;
       }
     | '[' '-' ']'
@@ -372,11 +376,11 @@ byte
 
         ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
 
-        $$->value = $1;
+        $$->value = (int) $1;
       }
     | _MASKED_BYTE_
       {
-        uint8_t mask = $1 >> 8;
+        uint8_t mask = (uint8_t) ($1 >> 8);
 
         if (mask == 0x00)
         {

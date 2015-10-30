@@ -45,13 +45,14 @@ typedef struct _CALLBACK_ARGS
 
 int _yr_scan_compare(
     uint8_t* data,
-    int data_size,
+    size_t data_size,
     uint8_t* string,
-    int string_length)
+    size_t string_length)
 {
   uint8_t* s1 = data;
   uint8_t* s2 = string;
-  int i = 0;
+
+  size_t i = 0;
 
   if (data_size < string_length)
     return 0;
@@ -59,19 +60,20 @@ int _yr_scan_compare(
   while (i < string_length && *s1++ == *s2++)
     i++;
 
-  return ((i == string_length) ? i : 0);
+  return (int) ((i == string_length) ? i : 0);
 }
 
 
 int _yr_scan_icompare(
     uint8_t* data,
-    int data_size,
+    size_t data_size,
     uint8_t* string,
-    int string_length)
+    size_t string_length)
 {
   uint8_t* s1 = data;
   uint8_t* s2 = string;
-  int i = 0;
+
+  size_t i = 0;
 
   if (data_size < string_length)
     return 0;
@@ -79,19 +81,20 @@ int _yr_scan_icompare(
   while (i < string_length && lowercase[*s1++] == lowercase[*s2++])
     i++;
 
-  return ((i == string_length) ? i : 0);
+  return (int) ((i == string_length) ? i : 0);
 }
 
 
 int _yr_scan_wcompare(
     uint8_t* data,
-    int data_size,
+    size_t data_size,
     uint8_t* string,
-    int string_length)
+    size_t string_length)
 {
   uint8_t* s1 = data;
   uint8_t* s2 = string;
-  int i = 0;
+
+  size_t i = 0;
 
   if (data_size < string_length * 2)
     return 0;
@@ -103,19 +106,20 @@ int _yr_scan_wcompare(
     i++;
   }
 
-  return ((i == string_length) ? i * 2 : 0);
+  return (int) ((i == string_length) ? i * 2 : 0);
 }
 
 
 int _yr_scan_wicompare(
     uint8_t* data,
-    int data_size,
+    size_t data_size,
     uint8_t* string,
-    int string_length)
+    size_t string_length)
 {
   uint8_t* s1 = data;
   uint8_t* s2 = string;
-  int i = 0;
+
+  size_t i = 0;
 
   if (data_size < string_length * 2)
     return 0;
@@ -127,7 +131,7 @@ int _yr_scan_wicompare(
     i++;
   }
 
-  return ((i == string_length) ? i * 2 : 0);
+  return (int) ((i == string_length) ? i * 2 : 0);
 }
 
 
@@ -289,6 +293,9 @@ int _yr_scan_fast_hex_re_exec(
           //
           // The opcode following the ANY is located at ip + 4
 
+          if (sp >= MAX_FAST_HEX_RE_STACK)
+            return -4;
+
           code_stack[sp] = ip + 4;
           input_stack[sp] = current_input;
           matches_stack[sp] = matches;
@@ -329,8 +336,6 @@ int _yr_scan_fast_hex_re_exec(
                 (*(ip + 11) == RE_OPCODE_LITERAL &&
                  *(ip + 12) == *next_input))
             {
-              assert(sp < MAX_FAST_HEX_RE_STACK);
-
               if (sp >= MAX_FAST_HEX_RE_STACK)
                 return -4;
 
@@ -361,7 +366,6 @@ void _yr_scan_update_match_chain_length(
     int chain_length)
 {
   YR_MATCH* match;
-  size_t ending_offset;
 
   if (match_to_update->chain_length == chain_length)
     return;
@@ -375,7 +379,7 @@ void _yr_scan_update_match_chain_length(
 
   while (match != NULL)
   {
-    ending_offset = match->offset + match->length;
+    int64_t ending_offset = match->offset + match->length;
 
     if (ending_offset + string->chain_gap_max >= match_to_update->offset &&
         ending_offset + string->chain_gap_min <= match_to_update->offset)
@@ -465,8 +469,8 @@ int _yr_scan_verify_chained_string_match(
     YR_STRING* matching_string,
     YR_SCAN_CONTEXT* context,
     uint8_t* match_data,
-    size_t match_base,
-    size_t match_offset,
+    uint64_t match_base,
+    uint64_t match_offset,
     int32_t match_length)
 {
   YR_STRING* string;
@@ -474,8 +478,8 @@ int _yr_scan_verify_chained_string_match(
   YR_MATCH* next_match;
   YR_MATCH* new_match;
 
-  size_t lower_offset;
-  size_t ending_offset;
+  uint64_t lower_offset;
+  uint64_t ending_offset;
   int32_t full_chain_length;
 
   int tidx = context->tidx;
@@ -560,7 +564,9 @@ int _yr_scan_verify_chained_string_match(
           _yr_scan_remove_match_from_list(
               match, &string->unconfirmed_matches[tidx]);
 
-          match->length = match_offset - match->offset + match_length;
+          match->length = (int32_t) \
+              (match_offset - match->offset + match_length);
+
           match->data = match_data - match_offset + match->offset;
           match->prev = NULL;
           match->next = NULL;
