@@ -24,8 +24,8 @@ int Yara::_instance_count = 0;
 
 Yara::Yara()
 {
-	_compiler = NULL;
-	_rules = NULL;
+	_compiler = nullptr;
+	_rules = nullptr;
 	_current_rules = "";
 
 	if (_instance_count == 0) {
@@ -49,7 +49,7 @@ Yara::~Yara()
 // ----------------------------------------------------------------------------
 
 pYara Yara::create() {
-	return pYara(new Yara());
+	return boost::make_shared<Yara>();
 }
 
 // ----------------------------------------------------------------------------
@@ -57,7 +57,7 @@ pYara Yara::create() {
 void* Yara::operator new(size_t size)
 {
 	void* p = malloc(size);
-	if (p == NULL)
+	if (p == nullptr)
 		throw std::bad_alloc();
 	return p;
 }
@@ -66,19 +66,19 @@ void* Yara::operator new(size_t size)
 
 void Yara::operator delete(void* p)
 {
-	if (p != NULL) {
+	if (p != nullptr) {
 		free(p);
 	}
 }
 
 // ----------------------------------------------------------------------------
 
-void Yara::_clean_compiler_and_rules()
+void Yara::_clean_compiler_and_rules() const
 {
-	if (_compiler != NULL) {
+	if (_compiler != nullptr) {
 		yr_compiler_destroy(_compiler);
 	}
-	if (_rules != NULL) {
+	if (_rules != nullptr) {
 		yr_rules_destroy(_rules);
 	}
 }
@@ -124,12 +124,12 @@ bool Yara::load_rules(const std::string& rule_filename)
 		if (yr_compiler_create(&_compiler) != ERROR_SUCCESS) {
 			return false;
 		}
-		yr_compiler_set_callback(_compiler, compiler_callback, NULL);
+		yr_compiler_set_callback(_compiler, compiler_callback, nullptr);
 		FILE* rule_file = fopen(rule_filename.c_str(), "r");
-		if (rule_file == NULL) {
+		if (rule_file == nullptr) {
 			return false;
 		}
-		retval = yr_compiler_add_file(_compiler, rule_file, NULL, rule_filename.c_str());
+		retval = yr_compiler_add_file(_compiler, rule_file, nullptr, rule_filename.c_str());
 		if (retval != ERROR_SUCCESS)
 		{
 			PRINT_ERROR << "Could not compile yara rules." << std::endl;
@@ -142,6 +142,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 		// Save the compiled rules to improve load times.
 		// /!\ The compiled rules will have to be deleted if the original (readable) rule file is updated!
+		// TODO: Compare timestamps and recompile automatically.
 		retval = yr_rules_save(_rules, (rule_filename + "c").c_str());
 		if (retval != ERROR_SUCCESS) {
 			goto END;
@@ -150,7 +151,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		res = true;
 		_current_rules = rule_filename;
 		END:
-		if (rule_file != NULL) {
+		if (rule_file != nullptr) {
 			fclose(rule_file);
 		}
 	}
@@ -159,21 +160,21 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
+const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 {
 	pcallback_data cb_data(new callback_data);
-	cb_data->yara_matches = matches(new match_vector());
+	cb_data->yara_matches = boost::make_shared<match_vector>();
 	int retval;
-	if (_rules == NULL || bytes.size() == 0)
+	if (_rules == nullptr || bytes.size() == 0)
 	{
-		if (_rules == NULL) {
+		if (_rules == nullptr) {
 			PRINT_ERROR << "No Yara rules loaded!" << std::endl;
 		}
 		return cb_data->yara_matches;
 	}
 
 	// Make a copy of the input buffer, because we can't be sure that Yara will not modify it
-	// and the constness of the input has to be enforced.
+	// and the constness of the input has to be guaranteed.
 	std::vector<boost::uint8_t> copy(bytes.begin(), bytes.end());
 
 	// Yara setup done. Scan the file.
@@ -197,13 +198,13 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes)
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data)
+const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) const
 {
 	pcallback_data cb_data(new callback_data);
-	cb_data->yara_matches = matches(new match_vector());
+	cb_data->yara_matches = boost::make_shared<match_vector>();
 	cb_data->pe_info = pe_data;
 	int retval;
-	if (_rules == NULL)
+	if (_rules == nullptr)
 	{
 		PRINT_ERROR << "No Yara rules loaded!" << std::endl;
 		return cb_data->yara_matches;
@@ -230,13 +231,13 @@ void compiler_callback(int error_level, const char* file_name, int line_number, 
 {
 	if (error_level == YARA_ERROR_LEVEL_ERROR)
 	{
-		PRINT_ERROR << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "(" << line_number
+		PRINT_ERROR << "[Yara compiler] " << (file_name != nullptr ? file_name : "") << "(" << line_number
 			<< ") : " << message << std::endl;
 	}
 	#ifdef _DEBUG // Warnings are very verbose, do not display them unless this is a debug release.
 		if (error_level == YARA_ERROR_LEVEL_WARNING)
 		{
-			PRINT_WARNING << "[Yara compiler] " << (file_name != NULL ? file_name : "") << "("
+			PRINT_WARNING << "[Yara compiler] " << (file_name != nullptr ? file_name : "") << "("
 				<< line_number << ") : " << message << std::endl;
 		}
 	#endif // _DEBUG
@@ -247,11 +248,11 @@ void compiler_callback(int error_level, const char* file_name, int line_number, 
 int get_match_data(int message, void* message_data, void* data)
 {
 	matches target;
-	YR_META* meta = NULL;
-	YR_STRING* s = NULL;
-	YR_RULE* rule = NULL;
+	YR_META* meta;
+	YR_STRING* s;
+	YR_RULE* rule;
 	pMatch m;
-	YR_MODULE_IMPORT* mi = NULL; // Used for the CALLBACK_MSG_IMPORT_MODULE message.
+	YR_MODULE_IMPORT* mi; // Used for the CALLBACK_MSG_IMPORT_MODULE message.
 	pcallback_data* cb_data = (pcallback_data*) data;
 	if (!cb_data)
 	{
@@ -266,7 +267,7 @@ int get_match_data(int message, void* message_data, void* data)
 			target = cb_data->get()->yara_matches;
 			meta = rule->metas;
 			s = rule->strings;
-			m = pMatch(new Match);
+			m = boost::make_shared<Match>();
 
 			while (!META_IS_NULL(meta))
 			{
@@ -278,9 +279,8 @@ int get_match_data(int message, void* message_data, void* data)
 				if (STRING_FOUND(s))
 				{
 					YR_MATCH* match = STRING_MATCHES(s).head;
-					while (match != NULL)
+					while (match != nullptr)
 					{
-						std::stringstream ss;
 						if (!STRING_IS_HEX(s))
 						{
 							std::string found((char*) match->data, match->length);
@@ -317,7 +317,7 @@ int get_match_data(int message, void* message_data, void* data)
 			mi = (YR_MODULE_IMPORT*) message_data;
 			if (std::string(mi->module_name) == "manape")
 			{
-				if (!cb_data || cb_data->get()->pe_info == NULL)
+				if (!cb_data || cb_data->get()->pe_info == nullptr)
 				{
 					PRINT_ERROR << "Yara rule imports the ManaPE module, but no ManaPE data was given!" << std::endl;
 					return ERROR_CALLBACK_ERROR;
@@ -338,7 +338,6 @@ int get_match_data(int message, void* message_data, void* data)
 			PRINT_WARNING << "Yara callback received an unhandled message (" << message << ")." << std::endl;
 			return ERROR_SUCCESS;
 	}
-	return CALLBACK_ERROR;
 }
 
 } // !namespace yara

@@ -31,7 +31,7 @@
 
 #include <stdlib.h>
 
-#include <boost/shared_ptr.hpp>
+#include <boost/make_shared.hpp>
 #include <boost/cstdint.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/system/api_config.hpp>
@@ -148,7 +148,7 @@ public:
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_bytes(const std::vector<boost::uint8_t>& bytes);
+	Y_DECLSPEC const_matches scan_bytes(const std::vector<boost::uint8_t>& bytes) const;
 
 	/**
 	 *	@brief	Tries to match an input file with the currently loaded Yara rules.
@@ -158,7 +158,7 @@ public:
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_file(const std::string& path, pmanape_data pe_info);
+	Y_DECLSPEC const_matches scan_file(const std::string& path, pmanape_data pe_info) const;
 
 	/**
 	*	@brief	Tries to match an input file with the currently loaded Yara rules.
@@ -169,7 +169,7 @@ public:
 	*
 	*	@return	A map containing the rule's metadata for all matching signatures.
 	*/
-	Y_DECLSPEC const_matches scan_file(const std::string& path) {
+	Y_DECLSPEC const_matches scan_file(const std::string& path) const {
 		return scan_file(path, pmanape_data());
 	}
 
@@ -181,7 +181,7 @@ private:
 	void* operator new(size_t);
 	void* operator new[](size_t);
 
-	void _clean_compiler_and_rules();
+	void _clean_compiler_and_rules() const;
 
 	YR_COMPILER*	_compiler;
 	YR_RULES*		_rules;
