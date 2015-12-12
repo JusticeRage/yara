@@ -45,7 +45,7 @@ extern "C" {
 
 };
 
-#include "color.h"
+#include "manacommons/color.h"
 
 #if defined BOOST_WINDOWS_API
 	#ifdef YARA_EXPORT
