@@ -112,7 +112,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 	if (retval != ERROR_SUCCESS && retval != ERROR_INVALID_FILE && retval != ERROR_UNSUPPORTED_FILE_VERSION)
 	{
-		PRINT_ERROR << "Could not load yara rules. (Yara Error 0x" << std::hex << retval << ")" << std::endl;
+		PRINT_ERROR << "Could not load yara rules (" << translate_error(retval) << ")." << std::endl;
 		return false;
 	}
 
@@ -132,7 +132,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		retval = yr_compiler_add_file(_compiler, rule_file, nullptr, rule_filename.c_str());
 		if (retval != ERROR_SUCCESS)
 		{
-			PRINT_ERROR << "Could not compile yara rules." << std::endl;
+			PRINT_ERROR << "Could not compile yara rules (" << translate_error(retval) << ")." << std::endl;
 			goto END;
 		}
 		retval = yr_compiler_get_rules(_compiler, &_rules);
@@ -188,8 +188,7 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 
 	if (retval != ERROR_SUCCESS)
 	{
-		//TODO: Translate yara errors defined in yara/error.h
-		PRINT_ERROR << "Yara error code = 0x" << std::hex << retval << std::endl;
+		PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
 		cb_data->yara_matches->clear();
 	}
 
@@ -219,7 +218,7 @@ const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) con
 
 	if (retval != ERROR_SUCCESS)
 	{
-		PRINT_ERROR << "Yara error code: 0x" << std::hex << retval << std::endl;
+		PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
 		cb_data->yara_matches->clear();
 	}
 	return cb_data->yara_matches;

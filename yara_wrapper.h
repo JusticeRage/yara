@@ -39,6 +39,9 @@
 // Contains the definition of the structure used to communicate with the module.
 #include "yara/modules/manape_data.h"
 
+// Contains the translation between Yara error codes and messages.
+#include "yara_errors.h"
+
 extern "C" {
 
 #include <yara/include/yara.h>
