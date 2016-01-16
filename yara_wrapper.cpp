@@ -130,9 +130,9 @@ bool Yara::load_rules(const std::string& rule_filename)
 			return false;
 		}
 		retval = yr_compiler_add_file(_compiler, rule_file, nullptr, rule_filename.c_str());
-		if (retval != ERROR_SUCCESS)
+		if (retval != 0)
 		{
-			PRINT_ERROR << "Could not compile yara rules (" << translate_error(retval) << ")." << std::endl;
+			PRINT_ERROR << "Could not compile yara rules (" << retval << " error(s))." << std::endl;
 			goto END;
 		}
 		retval = yr_compiler_get_rules(_compiler, &_rules);

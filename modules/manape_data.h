@@ -23,18 +23,19 @@ along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 /**
  *	@brief	Some summary section information.
  */
-typedef struct manape_section_t {
-	uint32_t	section_start;
-	uint32_t	section_size;
-} manape_section;
+typedef struct manape_file_portion_t {
+	uint32_t	start;
+	uint32_t	size;
+} manape_file_portion;
 
 /**
 	The object which is passed to the Yara ManaPE module.
 */
 typedef struct manape_data_t {
-	uint32_t		entrypoint;
-	manape_section*	sections;
-	uint32_t		number_of_sections;
+	uint32_t				entrypoint;
+	manape_file_portion*	sections;
+	uint32_t				number_of_sections;
+	manape_file_portion		version_info;
 } manape_data;
 
 #endif // !_MANAPE_DATA_H_d

@@ -35,6 +35,10 @@ begin_struct_array("sections");
 	declare_integer("start");
 	declare_integer("size");
 end_struct_array("sections");
+begin_struct("version_info")
+	declare_integer("start");
+	declare_integer("size");
+end_struct("version_info")
 
 end_declarations;
 
@@ -66,9 +70,11 @@ int module_load(
 	set_integer(pe_info->number_of_sections, module_object, "num_sections");
 	for (i = 0 ; i < pe_info->number_of_sections ; ++i)
 	{
-		set_integer(pe_info->sections[i].section_start, module_object, "sections[%i].start", i);
-		set_integer(pe_info->sections[i].section_size, module_object, "sections[%i].size", i);
+		set_integer(pe_info->sections[i].start, module_object, "sections[%i].start", i);
+		set_integer(pe_info->sections[i].size, module_object, "sections[%i].size", i);
 	}
+	set_integer(pe_info->version_info.start, module_object, "version_info.start");
+	set_integer(pe_info->version_info.size, module_object, "version_info.size");
 	return ERROR_SUCCESS;
 }
 
