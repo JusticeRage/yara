@@ -22,3 +22,15 @@ else()
     endif()
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99")
 endif()
+
+# make install command for linux machines:
+if ("${CMAKE_SYSTEM}" MATCHES "Linux")
+	# Copy binaries
+	install(TARGETS yara
+			RUNTIME DESTINATION /usr/local/bin
+			LIBRARY DESTINATION /usr/local/lib
+			ARCHIVE DESTINATION /usr/local/lib/static)
+
+	# Run ldconfig.
+	execute_process(COMMAND ldconfig)
+endif()
