@@ -282,7 +282,7 @@ int get_match_data(int message, void* message_data, void* data)
 					{
 						if (!STRING_IS_HEX(s))
 						{
-							std::string found((char*) match->data, match->length);
+							std::string found((char*) match->data, match->data_length);
 							// Yara inserts null bytes when it matches unicode strings. Dirty fix to remove them all.
 							found.erase(std::remove(found.begin(), found.end(), '\0'), found.end());
 							m->add_found_string(found);
@@ -291,10 +291,10 @@ int get_match_data(int message, void* message_data, void* data)
 						{
 							std::stringstream ss;
 							ss << std::hex;
-							for (int i = 0; i < std::min(20, match->length); i++) {
+							for (int i = 0; i < std::min(20, match->data_length); i++) {
 								ss << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
 							}
-							if (match->length > 20) {
+							if (match->data_length > 20) {
 								ss << "...";
 							}
 							m->add_found_string(ss.str());

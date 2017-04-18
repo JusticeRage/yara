@@ -1,4 +1,4 @@
-AC_INIT([yara], [3.4.0], [vmalvarez@virustotal.com])
+AC_INIT([yara], [3.5.0], [vmalvarez@virustotal.com])
 
 AC_CONFIG_SRCDIR([yara.c])
 
@@ -29,9 +29,25 @@ case $host_alias in
 esac
 
 case $host_os in
-    darwin*) CFLAGS="$CFLAGS -I/usr/local/opt/openssl/include -L/usr/local/opt/openssl/lib" ;;
+    darwin*) CFLAGS="$CFLAGS -I/opt/local/include" ;;
 esac
 
+ACX_PTHREAD(
+    [LIBS="$PTHREAD_LIBS $LIBS"
+     CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
+     CC="$PTHREAD_CC"],
+    [AC_MSG_ERROR([pthread API support is required.])])
+
+AC_CHECK_LIB(m, isnan)
+AC_CHECK_LIB(m, log2)
+AC_CHECK_FUNCS([strlcpy strlcat memmem timegm])
+
+
+AC_ARG_ENABLE([debug],
+  [AS_HELP_STRING([--enable-debug], [compiles with -g option])],
+  [if test x$enableval = xyes; then
+    CFLAGS="$CFLAGS -g"
+  fi])
 
 AC_ARG_ENABLE([profiling],
   [AS_HELP_STRING([--enable-profiling], [enable profiling support])],
@@ -45,7 +61,7 @@ AC_ARG_ENABLE([dmalloc],
   [if test x$enableval = xyes; then
     AC_CHECK_LIB(dmalloc, dmalloc_malloc,,
       AC_MSG_ERROR([please install dmalloc library]))
-    AC_DEFINE([DMALLOC], [1], [enable dmalloc])
+    CFLAGS="$CFLAGS -DDMALLOC"
   fi])
 
 AC_ARG_ENABLE([cuckoo],
@@ -54,7 +70,7 @@ AC_ARG_ENABLE([cuckoo],
     build_cuckoo_module=true
     AC_CHECK_LIB(jansson, json_loadb,,
       AC_MSG_ERROR([please install Jansson library]))
-    AC_DEFINE([CUCKOO], [1], [enable cuckoo module])
+    CFLAGS="$CFLAGS -DCUCKOO_MODULE"
   fi])
 
 AC_ARG_ENABLE([magic],
@@ -63,51 +79,50 @@ AC_ARG_ENABLE([magic],
     build_magic_module=true
     AC_CHECK_LIB(magic, magic_open,,
       AC_MSG_ERROR([please install libmagic library]))
-    AC_DEFINE([MAGIC], [1], [enable magic module])
+    CFLAGS="$CFLAGS -DMAGIC_MODULE"
   fi])
 
 AC_ARG_WITH([crypto],
   AS_HELP_STRING([--without-crypto],
     [ignore presence of OpenSSL and disable it]))
 
-  AS_IF([test "x$with_crypto" != "xno"],
-    [
-      AC_CHECK_LIB(crypto, MD5_Init,, [have_crypto=no])
-      AC_CHECK_LIB(crypto, MD5_Update,, [have_crypto=no])
-      AC_CHECK_LIB(crypto, MD5_Final,, [have_crypto=no])
-      AC_CHECK_LIB(crypto, SHA256_Init,, [have_crypto=no])
-      AC_CHECK_LIB(crypto, SHA256_Update,, [have_crypto=no])
-      AC_CHECK_LIB(crypto, SHA256_Final,, [have_crypto=no])
-    ],
-    [
-      have_crypto=no
-    ])
+AS_IF([test "x$with_crypto" != "xno"],
+  [
+    AC_CHECK_LIB(crypto, MD5_Init,, [have_crypto=no])
+    AC_CHECK_LIB(crypto, MD5_Update,, [have_crypto=no])
+    AC_CHECK_LIB(crypto, MD5_Final,, [have_crypto=no])
+    AC_CHECK_LIB(crypto, SHA256_Init,, [have_crypto=no])
+    AC_CHECK_LIB(crypto, SHA256_Update,, [have_crypto=no])
+    AC_CHECK_LIB(crypto, SHA256_Final,, [have_crypto=no])
+  ],
+  [
+    have_crypto=no
+  ])
 
-  AS_IF([test "x$have_crypto" = "xno"],
-    [
-      AS_IF([test "x$with_crypto" = "xyes"],
-        [
-          AC_MSG_ERROR([OpenSSL requested but not found])
+AS_IF([test "x$have_crypto" = "xno"],
+  [
+    AS_IF([test "x$with_crypto" = "xyes"],
+      [
+        AC_MSG_ERROR([please install OpenSSL library])
+      ],
+      [
+        AC_MSG_WARN([
+*******************************************************************************
+  Could not find OpenSSL library. The "hash" module and some features in "pe"
+  module has been disabled. If you want to enable all features please install
+  it and run this script again.
+*******************************************************************************
         ])
-    ],
-    [
-      build_hash_module=true
-      AC_DEFINE([HASH], [1], [enable hash module])
-    ])
+      ])
+  ],
+  [
+    build_hash_module=true
+    CFLAGS="$CFLAGS -DHASH_MODULE"
+  ])
 
-ACX_PTHREAD(
-    [LIBS="$PTHREAD_LIBS $LIBS"
-     CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
-     CC="$PTHREAD_CC"],
-    [AC_MSG_ERROR([pthread API support is required.])])
-
-AC_CHECK_LIB(m, isnan)
-AC_CHECK_LIB(m, log2)
-AC_CHECK_FUNCS([strlcpy strlcat memmem timegm])
-
-AM_CONDITIONAL([CUCKOO], [test x$build_cuckoo_module = xtrue])
-AM_CONDITIONAL([MAGIC], [test x$build_magic_module = xtrue])
-AM_CONDITIONAL([HASH], [test x$build_hash_module = xtrue])
+AM_CONDITIONAL([CUCKOO_MODULE], [test x$build_cuckoo_module = xtrue])
+AM_CONDITIONAL([MAGIC_MODULE], [test x$build_magic_module = xtrue])
+AM_CONDITIONAL([HASH_MODULE], [test x$build_hash_module = xtrue])
 AM_CONDITIONAL([GCC], [test "x$GCC" = xyes])
 
 AC_CONFIG_FILES([Makefile])

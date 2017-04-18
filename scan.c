@@ -1,17 +1,30 @@
 /*
 Copyright (c) 2014. The YARA Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
 
-   http://www.apache.org/licenses/LICENSE-2.0
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <assert.h>
@@ -173,6 +186,7 @@ int _yr_scan_fast_hex_re_exec(
   uint8_t* ip = code;
   uint8_t* current_input = input;
   uint8_t* next_input;
+  uint8_t* next_opcode;
   uint8_t mask;
   uint8_t value;
 
@@ -287,8 +301,8 @@ int _yr_scan_fast_hex_re_exec(
         case RE_OPCODE_SPLIT_B:
 
           // This is how the code looks like after the SPLIT:
-          //            split L3, L4    (3 bytes long)
-          //        L3: any             (1 byte long)
+          //            split L3, L4  (3 + sizeof(RE_SPLIT_ID_TYPE) bytes long)
+          //        L3: any           (1 byte long)
           //        L4: ...
           //
           // The opcode following the ANY is located at ip + 4
@@ -296,26 +310,33 @@ int _yr_scan_fast_hex_re_exec(
           if (sp >= MAX_FAST_HEX_RE_STACK)
             return -4;
 
-          code_stack[sp] = ip + 4;
+          code_stack[sp] = ip + sizeof(RE_SPLIT_ID_TYPE) + 4;
           input_stack[sp] = current_input;
           matches_stack[sp] = matches;
           sp++;
-          ip += 3;
+          ip += (3 + sizeof(RE_SPLIT_ID_TYPE));
 
           break;
 
         case RE_OPCODE_PUSH:
 
-          // This is how the code looks like after the PUSH:
+          // A PUSH operation indicates the begining of a code sequence
+          // generated for a jump. (example: { 01 02 [n-m] 03 04 }) The
+          // code sequence looks like this:
           //
-          //            push m-n-1        (3 bytes long)
-          //        L0: split L1, L2      (3 bytes long)
-          //        L1: any               (1 byte long)
-          //            jnz L0            (3 bytes long)
-          //        L2: pop               (1 byte long)
-          //            ...
+          //            push m-n-1    (3 bytes long)
+          //        L0: split L1, L2  (3 + sizeof(RE_SPLIT_ID_TYPE) bytes long)
+          //        L1: any           (1 byte long)
+          //            jnz L0        (3 bytes long)
+          //        L2: pop           (1 byte long)
+          //            split L3, L4  (3 + sizeof(RE_SPLIT_ID_TYPE) bytes long)
+          //        L3: any           (1 byte long)
+          //        L4:
+          //                  15 + 2 * sizeof(RE_SPLIT_ID_TYPE) bytes in total
 
-          for (i = *(uint16_t*)(ip + 1); i > 0; i--)
+          next_opcode = ip + 2 * sizeof(RE_SPLIT_ID_TYPE) + 15;
+
+          for (i = *(uint16_t*)(ip + 1) + 1; i > 0; i--)
           {
             if (flags & RE_FLAGS_BACKWARDS)
             {
@@ -330,23 +351,21 @@ int _yr_scan_fast_hex_re_exec(
                 continue;
             }
 
-            // The opcode following the POP is located at ip + 11
-
-            if ( *(ip + 11) != RE_OPCODE_LITERAL ||
-                (*(ip + 11) == RE_OPCODE_LITERAL &&
-                 *(ip + 12) == *next_input))
+            if ( *(next_opcode) != RE_OPCODE_LITERAL ||
+                (*(next_opcode) == RE_OPCODE_LITERAL &&
+                 *(next_opcode + 1) == *next_input))
             {
               if (sp >= MAX_FAST_HEX_RE_STACK)
                 return -4;
 
-              code_stack[sp] = ip + 11;
+              code_stack[sp] = next_opcode;
               input_stack[sp] = next_input;
               matches_stack[sp] = matches + i;
               sp++;
             }
           }
 
-          ip += 11;
+          ip = next_opcode;
           break;
 
         default:
@@ -379,7 +398,7 @@ void _yr_scan_update_match_chain_length(
 
   while (match != NULL)
   {
-    int64_t ending_offset = match->offset + match->length;
+    int64_t ending_offset = match->offset + match->match_length;
 
     if (ending_offset + string->chain_gap_max >= match_to_update->offset &&
         ending_offset + string->chain_gap_min <= match_to_update->offset)
@@ -408,7 +427,11 @@ int _yr_scan_add_match_to_list(
     if (match->offset == insertion_point->offset)
     {
       if (replace_if_exists)
-        insertion_point->length = match->length;
+      {
+        insertion_point->match_length = match->match_length;
+        insertion_point->data_length = match->data_length;
+        insertion_point->data = match->data;
+      }
 
       return ERROR_SUCCESS;
     }
@@ -501,7 +524,7 @@ int _yr_scan_verify_chained_string_match(
     while (match != NULL)
     {
       next_match = match->next;
-      ending_offset = match->offset + match->length;
+      ending_offset = match->offset + match->match_length;
 
       if (ending_offset + matching_string->chain_gap_max < lower_offset)
       {
@@ -526,11 +549,14 @@ int _yr_scan_verify_chained_string_match(
   {
     if (STRING_IS_CHAIN_TAIL(matching_string))
     {
+      // Chain tails must be chained to some other string
+      assert(matching_string->chained_to != NULL);
+
       match = matching_string->chained_to->unconfirmed_matches[tidx].head;
 
       while (match != NULL)
       {
-        ending_offset = match->offset + match->length;
+        ending_offset = match->offset + match->match_length;
 
         if (ending_offset + matching_string->chain_gap_max >= match_offset &&
             ending_offset + matching_string->chain_gap_min <= match_offset)
@@ -564,12 +590,16 @@ int _yr_scan_verify_chained_string_match(
           _yr_scan_remove_match_from_list(
               match, &string->unconfirmed_matches[tidx]);
 
-          match->length = (int32_t) \
+          match->match_length = (int32_t) \
               (match_offset - match->offset + match_length);
 
-          match->data = match_data - match_offset + match->offset;
-          match->prev = NULL;
-          match->next = NULL;
+          match->data_length = yr_min(match->match_length, MAX_MATCH_DATA);
+
+          FAIL_ON_ERROR(yr_arena_write_data(
+              context->matches_arena,
+              match_data - match_offset + match->offset,
+              match->data_length,
+              (void**) &match->data));
 
           FAIL_ON_ERROR(_yr_scan_add_match_to_list(
               match, &string->matches[tidx], FALSE));
@@ -598,10 +628,17 @@ int _yr_scan_verify_chained_string_match(
           sizeof(YR_MATCH),
           (void**) &new_match));
 
+      new_match->data_length = yr_min(match_length, MAX_MATCH_DATA);
+
+      FAIL_ON_ERROR(yr_arena_write_data(
+          context->matches_arena,
+          match_data,
+          new_match->data_length,
+          (void**) &new_match->data));
+
       new_match->base = match_base;
       new_match->offset = match_offset;
-      new_match->length = match_length;
-      new_match->data = match_data;
+      new_match->match_length = match_length;
       new_match->chain_length = 0;
       new_match->prev = NULL;
       new_match->next = NULL;
@@ -686,17 +723,24 @@ int _yr_scan_match_callback(
           NULL));
     }
 
-    result = yr_arena_allocate_memory(
+    FAIL_ON_ERROR(yr_arena_allocate_memory(
         callback_args->context->matches_arena,
         sizeof(YR_MATCH),
-        (void**) &new_match);
+        (void**) &new_match));
+
+    new_match->data_length = yr_min(match_length, MAX_MATCH_DATA);
+
+    FAIL_ON_ERROR(yr_arena_write_data(
+        callback_args->context->matches_arena,
+        match_data,
+        new_match->data_length,
+        (void**) &new_match->data));
 
     if (result == ERROR_SUCCESS)
     {
       new_match->base = callback_args->data_base;
       new_match->offset = match_offset;
-      new_match->length = match_length;
-      new_match->data = match_data;
+      new_match->match_length = match_length;
       new_match->prev = NULL;
       new_match->next = NULL;
 
@@ -775,6 +819,8 @@ int _yr_scan_verify_re_match(
     case -3:
       return ERROR_TOO_MANY_MATCHES;
     case -4:
+      return ERROR_TOO_MANY_RE_FIBERS;
+    case -5:
       return ERROR_INTERNAL_FATAL_ERROR;
   }
 
@@ -806,6 +852,8 @@ int _yr_scan_verify_re_match(
       case -3:
         return ERROR_TOO_MANY_MATCHES;
       case -4:
+        return ERROR_TOO_MANY_RE_FIBERS;
+      case -5:
         return ERROR_INTERNAL_FATAL_ERROR;
     }
   }

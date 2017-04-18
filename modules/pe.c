@@ -1,17 +1,30 @@
 /*
 Copyright (c) 2014. The YARA Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
 
-   http://www.apache.org/licenses/LICENSE-2.0
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #define _GNU_SOURCE
@@ -29,6 +42,9 @@ limitations under the License.
 #include <openssl/bio.h>
 #include <openssl/pkcs7.h>
 #include <openssl/x509.h>
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define X509_get_signature_nid(o) OBJ_obj2nid((o)->sig_alg->algorithm)
+#endif
 #endif
 
 #include <yara/pe.h>
@@ -371,12 +387,19 @@ PIMAGE_DATA_DIRECTORY pe_get_directory_entry(
 }
 
 
+#define OptionalHeader(pe,field)                \
+  (IS_64BITS_PE(pe) ?                           \
+   pe->header64->OptionalHeader.field :         \
+   pe->header->OptionalHeader.field)
+
+
 int64_t pe_rva_to_offset(
     PE* pe,
     uint64_t rva)
 {
   PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(pe->header);
 
+  DWORD lowest_section_rva = 0xffffffff;
   DWORD section_rva = 0;
   DWORD section_offset = 0;
   DWORD section_raw_size = 0;
@@ -385,16 +408,45 @@ int64_t pe_rva_to_offset(
 
   int i = 0;
 
+  int alignment = 0;
+  int rest = 0;
+
   while(i < yr_min(pe->header->FileHeader.NumberOfSections, MAX_PE_SECTIONS))
   {
     if (struct_fits_in_pe(pe, section, IMAGE_SECTION_HEADER))
     {
+      if (lowest_section_rva > section->VirtualAddress)
+      {
+        lowest_section_rva = section->VirtualAddress;
+      }
+
       if (rva >= section->VirtualAddress &&
           section_rva <= section->VirtualAddress)
       {
+        // Round section_offset
+        //
+        // Rounding everything less than 0x200 to 0 as discussed in
+        // https://code.google.com/archive/p/corkami/wikis/PE.wiki#PointerToRawData
+        // does not work for PE32_FILE from the test suite and for
+        // some tinype samples where File Alignment = 4
+        // (http://www.phreedom.org/research/tinype/).
+        //
+        // If FileAlignment is >= 0x200, it is apparently ignored (see
+        // Ero Carreras's pefile.py, PE.adjust_FileAlignment).
+
+        alignment = yr_min(OptionalHeader(pe, FileAlignment), 0x200);
+
         section_rva = section->VirtualAddress;
         section_offset = section->PointerToRawData;
         section_raw_size = section->SizeOfRawData;
+
+        if (alignment)
+        {
+          rest = section_offset % alignment;
+
+          if (rest)
+            section_offset -= rest;
+        }
       }
 
       section++;
@@ -404,6 +456,16 @@ int64_t pe_rva_to_offset(
     {
       return -1;
     }
+  }
+
+  // Everything before the first section seems to get mapped straight
+  // relative to ImageBase.
+
+  if (rva < lowest_section_rva)
+  {
+    section_rva = 0;
+    section_offset = 0;
+    section_raw_size = (DWORD) pe->data_size;
   }
 
   // Many sections, have a raw (on disk) size smaller than their in-memory size.
@@ -849,7 +911,7 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
   // I've seen binaries where OriginalFirstThunk is zero. In this case
   // use FirstThunk.
 
-  if (offset < 0)
+  if (offset <= 0)
     offset = pe_rva_to_offset(pe, import_descriptor->FirstThunk);
 
   if (offset < 0)
@@ -899,7 +961,10 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
             yr_calloc(1, sizeof(IMPORTED_FUNCTION));
 
         if (imported_func == NULL)
+        {
+          yr_free(name);
           continue;
+        }
 
         imported_func->name = name;
         imported_func->ordinal = ordinal;
@@ -963,7 +1028,10 @@ IMPORTED_FUNCTION* pe_parse_import_descriptor(
             yr_calloc(1, sizeof(IMPORTED_FUNCTION));
 
         if (imported_func == NULL)
+        {
+          yr_free(name);
           continue;
+        }
 
         imported_func->name = name;
         imported_func->ordinal = ordinal;
@@ -999,7 +1067,7 @@ int pe_valid_dll_name(
     if ((*c >= 'a' && *c <= 'z') ||
         (*c >= 'A' && *c <= 'Z') ||
         (*c >= '0' && *c <= '9') ||
-        (*c == '_' || *c == '.'))
+        (*c == '_' || *c == '.' || *c == '-'))
     {
       c++;
       l++;
@@ -1052,22 +1120,21 @@ IMPORTED_DLL* pe_parse_imports(
 
     if (offset >= 0)
     {
-      IMPORTED_FUNCTION* functions;
+      IMPORTED_DLL* imported_dll;
 
       char* dll_name = (char *) (pe->data + offset);
 
       if (!pe_valid_dll_name(dll_name, pe->data_size - (size_t) offset))
         break;
 
-      functions = pe_parse_import_descriptor(
-          pe, imports, dll_name);
+      imported_dll = (IMPORTED_DLL*) yr_calloc(1, sizeof(IMPORTED_DLL));
 
-      if (functions != NULL)
+      if (imported_dll != NULL)
       {
-        IMPORTED_DLL* imported_dll = (IMPORTED_DLL*) yr_calloc(
-            1, sizeof(IMPORTED_DLL));
+        IMPORTED_FUNCTION* functions = pe_parse_import_descriptor(
+            pe, imports, dll_name);
 
-        if (imported_dll != NULL)
+        if (functions != NULL)
         {
           imported_dll->name = yr_strdup(dll_name);;
           imported_dll->functions = functions;
@@ -1080,6 +1147,10 @@ IMPORTED_DLL* pe_parse_imports(
             tail->next = imported_dll;
 
           tail = imported_dll;
+        }
+        else
+        {
+          yr_free(imported_dll);
         }
       }
     }
@@ -1105,8 +1176,10 @@ void pe_parse_certificates(
   PIMAGE_DATA_DIRECTORY directory = pe_get_directory_entry(
       pe, IMAGE_DIRECTORY_ENTRY_SECURITY);
 
-  // directory->VirtualAddress is a file offset. Don't call pe_rva_to_offset().
+  // Default to 0 signatures until we know otherwise.
+  set_integer(0, pe->object, "number_of_signatures");
 
+  // directory->VirtualAddress is a file offset. Don't call pe_rva_to_offset().
   if (directory->VirtualAddress == 0 ||
       directory->VirtualAddress > pe->data_size ||
       directory->Size > pe->data_size ||
@@ -1127,18 +1200,16 @@ void pe_parse_certificates(
   // Make sure WIN_CERTIFICATE fits within the directory.
   // Make sure the Length specified fits within directory too.
   //
-  // Subtracting 8 because the docs say that the length is only for the
-  // Certificate, but the next paragraph contradicts that. All the binaries
-  // I've seen have the Length being the entire structure (Certificate
-  // included).
+  // The docs say that the length is only for the Certificate, but the next
+  // paragraph contradicts that. All the binaries I've seen have the Length
+  // being the entire structure (Certificate included).
   //
 
   while (struct_fits_in_pe(pe, win_cert, WIN_CERTIFICATE) &&
-         fits_in_pe(pe, win_cert->Certificate, win_cert->Length) &&
-         win_cert->Length >= 8 &&
-         (uint8_t*) win_cert + sizeof(WIN_CERTIFICATE) <= eod &&
-         (uint8_t*) win_cert->Certificate < eod &&
-         (uint8_t*) win_cert->Certificate + win_cert->Length - 8 <= eod)
+         win_cert->Length > sizeof(WIN_CERTIFICATE) &&
+         fits_in_pe(pe, win_cert, win_cert->Length) &&
+         (uint8_t*) win_cert + sizeof(WIN_CERTIFICATE) < eod &&
+         (uint8_t*) win_cert + win_cert->Length <= eod)
   {
     BIO* cert_bio;
     PKCS7* pkcs7;
@@ -1184,6 +1255,7 @@ void pe_parse_certificates(
     {
       const char* sig_alg;
       char buffer[256];
+      int bytes;
 
       ASN1_INTEGER* serial;
 
@@ -1204,42 +1276,91 @@ void pe_parse_certificates(
           pe->object,
           "signatures[%i].version", counter);
 
-      sig_alg = OBJ_nid2ln(OBJ_obj2nid(cert->sig_alg->algorithm));
+      sig_alg = OBJ_nid2ln(X509_get_signature_nid(cert));
 
       set_string(sig_alg, pe->object, "signatures[%i].algorithm", counter);
 
       serial = X509_get_serialNumber(cert);
 
-      // According to X.509 specification the maximum length for the serial
-      // number is 20 octets.
-
-      if (serial->length > 0 && serial->length <= 20)
+      if (serial)
       {
-        // Convert serial number to "common" string format: 00:01:02:03:04...
-        // For each byte in the integer to convert to hexlified format we
-        // need three bytes, two for the byte itself and one for colon. The
-        // last one doesn't have the colon, but the extra byte is used for the
-        // NULL terminator.
+        // ASN1_INTEGER can be negative (serial->type & V_ASN1_NEG_INTEGER),
+        // in which case the serial number will be stored in 2's complement.
+        //
+        // Handle negative serial numbers, which are technically not allowed
+        // by RFC5280, but do exist. An example binary which has a negative
+        // serial number is: 4bfe05f182aa273e113db6ed7dae4bb8.
+        //
+        // Negative serial numbers are handled by calling i2d_ASN1_INTEGER()
+        // with a NULL second parameter. This will return the size of the
+        // buffer necessary to store the proper serial number.
+        //
+        // Do this even for positive serial numbers because it makes the code
+        // cleaner and easier to read.
 
-        char* serial_number = (char *) yr_malloc(serial->length * 3);
+        bytes = i2d_ASN1_INTEGER(serial, NULL);
 
-        if (serial_number != NULL)
+        // According to X.509 specification the maximum length for the
+        // serial number is 20 octets. Add two bytes to account for
+        // DER type and length information.
+
+        if (bytes > 2 && bytes <= 22)
         {
-          int j;
+          // Now that we know the size of the serial number allocate enough
+          // space to hold it, and use i2d_ASN1_INTEGER() one last time to
+          // hold it in the allocated buffer.
 
-          for (j = 0; j < serial->length; j++)
+          unsigned char* serial_der = (unsigned char*) yr_malloc(bytes);
+
+          if (serial_der != NULL)
           {
-            // Don't put the colon on the last one.
-            if (j < serial->length - 1)
-              snprintf(serial_number + 3 * j, 4, "%02x:", serial->data[j]);
-            else
-              snprintf(serial_number + 3 * j, 3, "%02x", serial->data[j]);
+            bytes = i2d_ASN1_INTEGER(serial, &serial_der);
+
+            // i2d_ASN1_INTEGER() moves the pointer as it writes into
+            // serial_bytes. Move it back.
+
+            serial_der -= bytes;
+
+            // Skip over DER type, length information
+            unsigned char* serial_bytes = serial_der + 2;
+            bytes -= 2;
+
+            // Also allocate space to hold the "common" string format:
+            // 00:01:02:03:04...
+            //
+            // For each byte in the serial to convert to hexlified format we
+            // need three bytes, two for the byte itself and one for colon.
+            // The last one doesn't have the colon, but the extra byte is used
+            // for the NULL terminator.
+
+            char *serial_ascii = (char*) yr_malloc(bytes * 3);
+
+            if (serial_ascii)
+            {
+              int j;
+
+              for (j = 0; j < bytes; j++)
+              {
+                // Don't put the colon on the last one.
+                if (j < bytes - 1)
+                  snprintf(
+                    (char*) serial_ascii + 3 * j, 4, "%02x:", serial_bytes[j]);
+                else
+                  snprintf(
+                    (char*) serial_ascii + 3 * j, 3, "%02x", serial_bytes[j]);
+              }
+
+              set_string(
+                  (char*) serial_ascii,
+                  pe->object,
+                  "signatures[%i].serial",
+                  counter);
+
+              yr_free(serial_ascii);
+            }
+
+            yr_free(serial_der);
           }
-
-          set_string(
-              serial_number, pe->object, "signatures[%i].serial", counter);
-
-          yr_free(serial_number);
         }
       }
 
@@ -1276,11 +1397,6 @@ void pe_parse_header(
   char section_name[IMAGE_SIZEOF_SHORT_NAME + 1];
   int i, scount;
 
-#define OptionalHeader(field) \
-    (IS_64BITS_PE(pe) ? \
-        pe->header64->OptionalHeader.field : \
-        pe->header->OptionalHeader.field)
-
   set_integer(
       pe->header->FileHeader.Machine,
       pe->object, "machine");
@@ -1299,48 +1415,48 @@ void pe_parse_header(
 
   set_integer(
       flags & SCAN_FLAGS_PROCESS_MEMORY ?
-        base_address + OptionalHeader(AddressOfEntryPoint) :
-        pe_rva_to_offset(pe, OptionalHeader(AddressOfEntryPoint)),
+        base_address + OptionalHeader(pe, AddressOfEntryPoint) :
+        pe_rva_to_offset(pe, OptionalHeader(pe, AddressOfEntryPoint)),
       pe->object, "entry_point");
 
   set_integer(
-      OptionalHeader(ImageBase),
+      OptionalHeader(pe, ImageBase),
       pe->object, "image_base");
 
   set_integer(
-      OptionalHeader(MajorLinkerVersion),
+      OptionalHeader(pe, MajorLinkerVersion),
       pe->object, "linker_version.major");
 
   set_integer(
-      OptionalHeader(MinorLinkerVersion),
+      OptionalHeader(pe, MinorLinkerVersion),
       pe->object, "linker_version.minor");
 
   set_integer(
-      OptionalHeader(MajorOperatingSystemVersion),
+      OptionalHeader(pe, MajorOperatingSystemVersion),
       pe->object, "os_version.major");
 
   set_integer(
-      OptionalHeader(MinorOperatingSystemVersion),
+      OptionalHeader(pe, MinorOperatingSystemVersion),
       pe->object, "os_version.minor");
 
   set_integer(
-      OptionalHeader(MajorImageVersion),
+      OptionalHeader(pe, MajorImageVersion),
       pe->object, "image_version.major");
 
   set_integer(
-      OptionalHeader(MinorImageVersion),
+      OptionalHeader(pe, MinorImageVersion),
       pe->object, "image_version.minor");
 
   set_integer(
-      OptionalHeader(MajorSubsystemVersion),
+      OptionalHeader(pe, MajorSubsystemVersion),
       pe->object, "subsystem_version.major");
 
   set_integer(
-      OptionalHeader(MinorSubsystemVersion),
+      OptionalHeader(pe, MinorSubsystemVersion),
       pe->object, "subsystem_version.minor");
 
   set_integer(
-      OptionalHeader(Subsystem),
+      OptionalHeader(pe, Subsystem),
       pe->object, "subsystem");
 
   pe_iterate_resources(
@@ -1475,7 +1591,7 @@ define_function(section_index_name)
 
 define_function(exports)
 {
-  char* function_name = string_argument(1);
+  SIZED_STRING* function_name = sized_string_argument(1);
 
   YR_OBJECT* module = module();
   PE* pe = (PE*) module->data;
@@ -1486,6 +1602,7 @@ define_function(exports)
 
   int64_t offset;
   uint32_t i;
+  size_t remaining;
 
   // If not a PE file, return UNDEFINED
 
@@ -1530,10 +1647,14 @@ define_function(exports)
     if (offset < 0)
       return_integer(0);
 
+    remaining = pe->data_size - (size_t) offset;
     name = (char*)(pe->data + offset);
 
-    if (strncmp(name, function_name, pe->data_size - (size_t) offset) == 0)
+    if (remaining >= function_name->length &&
+        strncmp(name, function_name->c_string, remaining) == 0)
+    {
       return_integer(1);
+    }
   }
 
   return_integer(0);
@@ -1615,10 +1736,7 @@ define_function(imphash)
       final_name = (char*) yr_malloc(final_name_len + 1);
 
       if (final_name == NULL)
-      {
-        yr_free(dll_name);
         break;
-      }
 
       sprintf(final_name, first ? "%s.%s": ",%s.%s", dll_name, func->name);
 
@@ -1790,7 +1908,8 @@ define_function(locale)
 define_function(language)
 {
   YR_OBJECT* module = module();
-  PE* pe = module->data;
+  PE* pe = (PE*) module->data;
+
 
   uint64_t language = integer_argument(1);
   int64_t n, i;
@@ -1817,30 +1936,158 @@ define_function(language)
 }
 
 
+define_function(is_dll)
+{
+  int64_t characteristics;
+  YR_OBJECT* module = module();
+
+  if (is_undefined(module, "characteristics"))
+    return_integer(UNDEFINED);
+
+  characteristics = get_integer(module, "characteristics");
+  return_integer(characteristics & IMAGE_FILE_DLL);
+}
+
+
+define_function(is_32bit)
+{
+  YR_OBJECT* module = module();
+  PE* pe = (PE*) module->data;
+
+  if (pe == NULL)
+    return_integer(UNDEFINED);
+
+  return_integer(IS_64BITS_PE(pe) ? 0 : 1);
+}
+
+
+define_function(is_64bit)
+{
+  YR_OBJECT* module = module();
+  PE* pe = (PE*) module->data;
+
+  if (pe == NULL)
+    return_integer(UNDEFINED);
+
+  return_integer(IS_64BITS_PE(pe) ? 1 : 0);
+}
+
+
+static uint64_t rich_internal(
+    YR_OBJECT* module,
+    uint64_t version,
+    uint64_t toolid)
+{
+  int64_t rich_length;
+  int64_t rich_count;
+  int64_t i;
+
+  PRICH_SIGNATURE clear_rich_signature;
+  SIZED_STRING* rich_string;
+
+  // Check if the required fields are set
+  if (is_undefined(module, "rich_signature.length"))
+      return UNDEFINED;
+
+  rich_length = get_integer(module, "rich_signature.length");
+  rich_string = get_string(module, "rich_signature.clear_data");
+
+  // If the clear_data was not set, return UNDEFINED
+  if (rich_string == NULL)
+      return UNDEFINED;
+
+  if (version == UNDEFINED && toolid == UNDEFINED)
+      return FALSE;
+
+  clear_rich_signature = (PRICH_SIGNATURE) rich_string->c_string;
+
+  // Loop over the versions in the rich signature
+
+  rich_count = \
+      (rich_length - sizeof(RICH_SIGNATURE)) / sizeof(RICH_VERSION_INFO);
+
+  for (i = 0; i < rich_count; i++)
+  {
+    DWORD id_version = clear_rich_signature->versions[i].id_version;
+
+    int match_version = (version == RICH_VERSION_VERSION(id_version));
+    int match_toolid = (toolid == RICH_VERSION_ID(id_version));
+
+    if (version != UNDEFINED && toolid != UNDEFINED)
+    {
+      // check version and toolid
+      if (match_version && match_toolid)
+        return TRUE;
+    }
+    else if (version != UNDEFINED)
+    {
+      // check only version
+      if (match_version)
+        return TRUE;
+    }
+    else if (toolid != UNDEFINED)
+    {
+      // check only toolid
+      if (match_toolid)
+        return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+
+define_function(rich_version)
+{
+  return_integer(
+      rich_internal(module(), integer_argument(1), UNDEFINED));
+}
+
+
+define_function(rich_version_toolid)
+{
+  return_integer(
+      rich_internal(module(), integer_argument(1), integer_argument(2)));
+}
+
+
+define_function(rich_toolid)
+{
+    return_integer(
+       rich_internal(module(), UNDEFINED, integer_argument(1)));
+}
+
+
+define_function(rich_toolid_version)
+{
+  return_integer(
+      rich_internal(module(), integer_argument(2), integer_argument(1)));
+}
+
 begin_declarations;
 
-  declare_integer("MACHINE_UNKNOWN")
-  declare_integer("MACHINE_AM33")
-  declare_integer("MACHINE_AMD64")
-  declare_integer("MACHINE_ARM")
-  declare_integer("MACHINE_ARMNT")
-  declare_integer("MACHINE_ARM64")
-  declare_integer("MACHINE_EBC")
-  declare_integer("MACHINE_I386")
-  declare_integer("MACHINE_IA64")
-  declare_integer("MACHINE_M32R")
-  declare_integer("MACHINE_MIPS16")
-  declare_integer("MACHINE_MIPSFPU")
-  declare_integer("MACHINE_MIPSFPU16")
-  declare_integer("MACHINE_POWERPC")
-  declare_integer("MACHINE_POWERPCFP")
-  declare_integer("MACHINE_R4000")
-  declare_integer("MACHINE_SH3")
-  declare_integer("MACHINE_SH3DSP")
-  declare_integer("MACHINE_SH4")
-  declare_integer("MACHINE_SH5")
-  declare_integer("MACHINE_THUMB")
-  declare_integer("MACHINE_WCEMIPSV2")
+  declare_integer("MACHINE_UNKNOWN");
+  declare_integer("MACHINE_AM33");
+  declare_integer("MACHINE_AMD64");
+  declare_integer("MACHINE_ARM");
+  declare_integer("MACHINE_ARMNT");
+  declare_integer("MACHINE_ARM64");
+  declare_integer("MACHINE_EBC");
+  declare_integer("MACHINE_I386");
+  declare_integer("MACHINE_IA64");
+  declare_integer("MACHINE_M32R");
+  declare_integer("MACHINE_MIPS16");
+  declare_integer("MACHINE_MIPSFPU");
+  declare_integer("MACHINE_MIPSFPU16");
+  declare_integer("MACHINE_POWERPC");
+  declare_integer("MACHINE_POWERPCFP");
+  declare_integer("MACHINE_R4000");
+  declare_integer("MACHINE_SH3");
+  declare_integer("MACHINE_SH3DSP");
+  declare_integer("MACHINE_SH4");
+  declare_integer("MACHINE_SH5");
+  declare_integer("MACHINE_THUMB");
+  declare_integer("MACHINE_WCEMIPSV2");
 
   declare_integer("SUBSYSTEM_UNKNOWN");
   declare_integer("SUBSYSTEM_NATIVE");
@@ -1949,6 +2196,10 @@ begin_declarations;
     declare_integer("key");
     declare_string("raw_data");
     declare_string("clear_data");
+    declare_function("version", "i", "i", rich_version);
+    declare_function("version", "ii", "i", rich_version_toolid);
+    declare_function("toolid", "i", "i", rich_toolid);
+    declare_function("toolid", "ii", "i", rich_toolid_version);
   end_struct("rich_signature");
 
   #if defined(HAVE_LIBCRYPTO)
@@ -1963,12 +2214,17 @@ begin_declarations;
   declare_function("imports", "s", "i", imports_dll);
   declare_function("locale", "i", "i", locale);
   declare_function("language", "i", "i", language);
+  declare_function("is_dll", "", "i", is_dll);
+  declare_function("is_32bit", "", "i", is_32bit);
+  declare_function("is_64bit", "", "i", is_64bit);
 
-  declare_integer("resource_timestamp")
+  declare_integer("resource_timestamp");
+
   begin_struct("resource_version");
     declare_integer("major");
     declare_integer("minor");
   end_struct("resource_version");
+
   begin_struct_array("resources");
     declare_integer("offset");
     declare_integer("length");
@@ -1979,6 +2235,7 @@ begin_declarations;
     declare_string("name_string");
     declare_string("language_string");
   end_struct_array("resources");
+
   declare_integer("number_of_resources");
 
   #if defined(HAVE_LIBCRYPTO)
@@ -1992,6 +2249,7 @@ begin_declarations;
     declare_integer("not_after");
     declare_function("valid_on", "i", "i", valid_on);
   end_struct_array("signatures");
+
   declare_integer("number_of_signatures");
   #endif
 
@@ -2019,6 +2277,11 @@ int module_load(
     size_t module_data_size)
 {
   YR_MEMORY_BLOCK* block;
+  YR_MEMORY_BLOCK_ITERATOR* iterator = context->iterator;
+
+  PIMAGE_NT_HEADERS32 pe_header;
+  uint8_t* block_data = NULL;
+  PE* pe = NULL;
 
   set_integer(
       IMAGE_FILE_MACHINE_UNKNOWN, module_object,
@@ -2259,9 +2522,14 @@ int module_load(
       RESOURCE_TYPE_MANIFEST, module_object,
       "RESOURCE_TYPE_MANIFEST");
 
-  foreach_memory_block(context, block)
+  foreach_memory_block(iterator, block)
   {
-    PIMAGE_NT_HEADERS32 pe_header = pe_get_header(block->data, block->size);
+	block_data = block->fetch_data(block);
+
+    if (block_data == NULL)
+      continue;
+
+    pe_header = pe_get_header(block_data, block->size);
 
     if (pe_header != NULL)
     {
@@ -2270,12 +2538,12 @@ int module_load(
       if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
           !(pe_header->FileHeader.Characteristics & IMAGE_FILE_DLL))
       {
-        PE* pe = (PE*) yr_malloc(sizeof(PE));
+        pe = (PE*) yr_malloc(sizeof(PE));
 
         if (pe == NULL)
           return ERROR_INSUFICIENT_MEMORY;
 
-        pe->data = block->data;
+        pe->data = block_data;
         pe->data_size = block->size;
         pe->header = pe_header;
         pe->object = module_object;

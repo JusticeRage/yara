@@ -1,20 +1,33 @@
 /*
 Copyright (c) 2007-2013. The YARA Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
 
-   http://www.apache.org/licenses/LICENSE-2.0
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__CYGWIN__)
 
 #include <sys/stat.h>
 #include <dirent.h>
@@ -110,6 +123,7 @@ int negate = FALSE;
 int count = 0;
 int limit = 0;
 int timeout = 1000000;
+int stack_size = DEFAULT_STACK_SIZE;
 int threads = 8;
 
 
@@ -157,6 +171,9 @@ args_option_t options[] =
 
   OPT_INTEGER('a', "timeout", &timeout,
       "abort scanning after the given number of SECONDS", "SECONDS"),
+
+  OPT_INTEGER('k', "stack-size", &stack_size,
+      "set maximum stack size (default=16384)", "SLOTS"),
 
   OPT_BOOLEAN('r', "recursive", &recursive_search,
       "recursively search directories"),
@@ -273,7 +290,7 @@ char* file_queue_get()
 }
 
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__CYGWIN__)
 
 int is_directory(
     const char* path)
@@ -314,7 +331,9 @@ void scan_dir(
       {
         file_queue_put(full_path);
       }
-      else if (recursive && FindFileData.cFileName[0] != '.' )
+      else if (recursive &&
+               strcmp(FindFileData.cFileName, ".") != 0 &&
+               strcmp(FindFileData.cFileName, "..") != 0)
       {
         scan_dir(full_path, recursive, start_time, rules, callback);
       }
@@ -337,6 +356,7 @@ int is_directory(
 
   return 0;
 }
+
 
 void scan_dir(
     const char* dir,
@@ -369,7 +389,8 @@ void scan_dir(
         else if(recursive &&
                 S_ISDIR(st.st_mode) &&
                 !S_ISLNK(st.st_mode) &&
-                de->d_name[0] != '.')
+                strcmp(de->d_name, ".") != 0 &&
+                strcmp(de->d_name, "..") != 0)
         {
           scan_dir(full_path, recursive, start_time, rules, callback);
         }
@@ -402,7 +423,7 @@ void print_string(
 }
 
 
-static char cescapes[] = 
+static char cescapes[] =
 {
   0  , 0  , 0  , 0  , 0  , 0  , 0  , 'a',
   'b', 't', 'n', 'v', 'f', 'r', 0  , 0  ,
@@ -413,9 +434,9 @@ static char cescapes[] =
 
 void print_escaped(
     uint8_t* data,
-    int length)
+    size_t length)
 {
-  int i;
+  size_t i;
 
   for (i = 0; i < length; i++)
   {
@@ -426,15 +447,15 @@ void print_escaped(
       case '\\':
         printf("\\%c", data[i]);
         break;
-  
+
       default:
-        if (data[i] >= 127) 
+        if (data[i] >= 127)
           printf("\\%03o", data[i]);
         else if (data[i] >= 32)
           putchar(data[i]);
-        else if (cescapes[data[i]] != 0) 
+        else if (cescapes[data[i]] != 0)
           printf("\\%c", cescapes[data[i]]);
-        else 
+        else
           printf("\\%03o", data[i]);
     }
   }
@@ -455,7 +476,8 @@ void print_hex_string(
 }
 
 
-void print_scanner_error(int error)
+void print_scanner_error(
+    int error)
 {
   switch (error)
   {
@@ -478,6 +500,13 @@ void print_scanner_error(int error)
       break;
     case ERROR_CORRUPT_FILE:
       fprintf(stderr, "corrupt compiled rules file.\n");
+      break;
+    case ERROR_EXEC_STACK_OVERFLOW:
+      fprintf(stderr, "stack overflow while evaluating condition "
+                      "(see --stack-size argument).\n");
+      break;
+    case ERROR_INVALID_EXTERNAL_VARIABLE_TYPE:
+      fprintf(stderr, "invalid type for external variable.\n");
       break;
     default:
       fprintf(stderr, "internal error: %d\n", error);
@@ -505,7 +534,10 @@ void print_compiler_error(
 }
 
 
-int handle_message(int message, YR_RULE* rule, void* data)
+int handle_message(
+    int message,
+    YR_RULE* rule,
+    void* data)
 {
   const char* tag;
   int show = TRUE;
@@ -597,7 +629,7 @@ int handle_message(int message, YR_RULE* rule, void* data)
         {
           printf("%s=%s", meta->identifier, meta->integer ? "true" : "false");
         }
-        else 
+        else
         {
           printf("%s=\"", meta->identifier);
           print_escaped((uint8_t*) (meta->string), strlen(meta->string));
@@ -627,9 +659,9 @@ int handle_message(int message, YR_RULE* rule, void* data)
               string->identifier);
 
           if (STRING_IS_HEX(string))
-            print_hex_string(match->data, match->length);
+            print_hex_string(match->data, match->data_length);
           else
-            print_string(match->data, match->length);
+            print_string(match->data, match->data_length);
         }
       }
     }
@@ -647,9 +679,13 @@ int handle_message(int message, YR_RULE* rule, void* data)
 }
 
 
-int callback(int message, void* message_data, void* user_data)
+int callback(
+    int message,
+    void* message_data,
+    void* user_data)
 {
   YR_MODULE_IMPORT* mi;
+  YR_OBJECT* object;
   MODULE_DATA* module_data;
 
   switch(message)
@@ -659,8 +695,8 @@ int callback(int message, void* message_data, void* user_data)
       return handle_message(message, (YR_RULE*) message_data, user_data);
 
     case CALLBACK_MSG_IMPORT_MODULE:
-      mi = (YR_MODULE_IMPORT*) message_data;
 
+      mi = (YR_MODULE_IMPORT*) message_data;
       module_data = modules_data_list;
 
       while (module_data != NULL)
@@ -676,12 +712,29 @@ int callback(int message, void* message_data, void* user_data)
       }
 
       return CALLBACK_CONTINUE;
+
+    case CALLBACK_MSG_MODULE_IMPORTED:
+
+      if (show_module_data)
+      {
+        object = (YR_OBJECT*) message_data;
+
+        mutex_lock(&output_mutex);
+
+        yr_object_print_data(object, 0, 1);
+        printf("\n");
+
+        mutex_unlock(&output_mutex);
+      }
+
+      return CALLBACK_CONTINUE;
   }
 
   return CALLBACK_ERROR;
 }
 
-#ifdef _WIN32
+
+#if defined(_WIN32) || defined(__CYGWIN__)
 DWORD WINAPI scanning_thread(LPVOID param)
 #else
 void* scanning_thread(void* param)
@@ -695,9 +748,6 @@ void* scanning_thread(void* param)
 
   if (fast_scan)
     flags |= SCAN_FLAGS_FAST_MODE;
-
-  if (show_module_data)
-    flags |= SCAN_FLAGS_SHOW_MODULE_DATA;
 
   while (file_path != NULL)
   {
@@ -789,6 +839,8 @@ int define_external_variables(
     YR_RULES* rules,
     YR_COMPILER* compiler)
 {
+  int result = ERROR_SUCCESS;
+
   for (int i = 0; ext_vars[i] != NULL; i++)
   {
     char* equal_sign = strchr(ext_vars[i], '=');
@@ -796,7 +848,7 @@ int define_external_variables(
     if (!equal_sign)
     {
       fprintf(stderr, "error: wrong syntax for `-d` option.\n");
-      return FALSE;
+      return ERROR_SUCCESS;
     }
 
     // Replace the equal sign with null character to split the external
@@ -808,17 +860,16 @@ int define_external_variables(
     char* identifier = ext_vars[i];
     char* value = equal_sign + 1;
 
-
     if (is_float(value))
     {
       if (rules != NULL)
-        yr_rules_define_float_variable(
+        result = yr_rules_define_float_variable(
             rules,
             identifier,
             atof(value));
 
       if (compiler != NULL)
-        yr_compiler_define_float_variable(
+        result = yr_compiler_define_float_variable(
             compiler,
             identifier,
             atof(value));
@@ -826,13 +877,13 @@ int define_external_variables(
     else if (is_integer(value))
     {
       if (rules != NULL)
-        yr_rules_define_integer_variable(
+        result = yr_rules_define_integer_variable(
             rules,
             identifier,
             atoi(value));
 
       if (compiler != NULL)
-        yr_compiler_define_integer_variable(
+        result = yr_compiler_define_integer_variable(
             compiler,
             identifier,
             atoi(value));
@@ -840,13 +891,13 @@ int define_external_variables(
     else if (strcmp(value, "true") == 0 || strcmp(value, "false") == 0)
     {
       if (rules != NULL)
-        yr_rules_define_boolean_variable(
+        result = yr_rules_define_boolean_variable(
             rules,
             identifier,
             strcmp(value, "true") == 0);
 
       if (compiler != NULL)
-        yr_compiler_define_boolean_variable(
+        result = yr_compiler_define_boolean_variable(
             compiler,
             identifier,
             strcmp(value, "true") == 0);
@@ -854,20 +905,20 @@ int define_external_variables(
     else
     {
       if (rules != NULL)
-        yr_rules_define_string_variable(
+        result = yr_rules_define_string_variable(
             rules,
             identifier,
             value);
 
       if (compiler != NULL)
-        yr_compiler_define_string_variable(
+        result = yr_compiler_define_string_variable(
             compiler,
             identifier,
             value);
     }
   }
 
-  return TRUE;
+  return result;
 }
 
 
@@ -943,7 +994,7 @@ int main(
   if (show_version)
   {
     printf("%s\n", PACKAGE_STRING);
-    return EXIT_FAILURE;
+    return EXIT_SUCCESS;
   }
 
   if (show_help)
@@ -957,7 +1008,7 @@ int main(
     args_print_usage(options, 35);
     printf("\nSend bug reports and suggestions to: %s.\n", PACKAGE_BUGREPORT);
 
-    return EXIT_FAILURE;
+    return EXIT_SUCCESS;
   }
 
   if (argc != 2)
@@ -984,6 +1035,14 @@ int main(
     exit_with_code(EXIT_FAILURE);
   }
 
+  if (stack_size != DEFAULT_STACK_SIZE)
+  {
+    // If the user chose a different stack size than default,
+    // modify the yara config here.
+
+    yr_set_configuration(YR_CONFIG_STACK_SIZE, &stack_size);
+  }
+
   // Try to load the rules file as a binary file containing
   // compiled rules first
 
@@ -1002,8 +1061,13 @@ int main(
 
   if (result == ERROR_SUCCESS)
   {
-    if (!define_external_variables(rules, NULL))
+    result = define_external_variables(rules, NULL);
+
+    if (result != ERROR_SUCCESS)
+    {
+      print_scanner_error(result);
       exit_with_code(EXIT_FAILURE);
+    }
   }
   else
   {
@@ -1013,8 +1077,13 @@ int main(
     if (yr_compiler_create(&compiler) != ERROR_SUCCESS)
       exit_with_code(EXIT_FAILURE);
 
-    if (!define_external_variables(NULL, compiler))
+    result = define_external_variables(NULL, compiler);
+
+    if (result != ERROR_SUCCESS)
+    {
+      print_scanner_error(result);
       exit_with_code(EXIT_FAILURE);
+    }
 
     yr_compiler_set_callback(compiler, print_compiler_error, NULL);
 
@@ -1052,9 +1121,6 @@ int main(
 
     if (fast_scan)
       flags |= SCAN_FLAGS_FAST_MODE;
-
-    if (show_module_data)
-      flags |= SCAN_FLAGS_SHOW_MODULE_DATA;
 
     result = yr_rules_scan_proc(
         rules,
@@ -1116,9 +1182,6 @@ int main(
 
     if (fast_scan)
       flags |= SCAN_FLAGS_FAST_MODE;
-
-    if (show_module_data)
-      flags |= SCAN_FLAGS_SHOW_MODULE_DATA;
 
     result = yr_rules_scan_file(
         rules,

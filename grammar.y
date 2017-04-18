@@ -1,29 +1,43 @@
 /*
 Copyright (c) 2007-2013. The YARA Authors. All Rights Reserved.
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
 
-   http://www.apache.org/licenses/LICENSE-2.0
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 %{
 
+
 #include <assert.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
 #include <limits.h>
 #include <stddef.h>
 
 
+#include <yara/integers.h>
 #include <yara/utils.h>
 #include <yara/strutils.h>
 #include <yara/compiler.h>
@@ -83,7 +97,11 @@ limitations under the License.
 
 %expect 1   // expect 1 shift/reduce conflicts
 
-%debug
+// Uncomment this line to print parsing information that can be useful to
+// debug YARA's grammar.
+
+// %debug
+
 %name-prefix="yara_yy"
 %pure-parser
 %parse-param {void *yyscanner}
@@ -220,18 +238,26 @@ import
 
 
 rule
-    : rule_modifiers _RULE_ _IDENTIFIER_ tags '{' meta strings
+    : rule_modifiers _RULE_ _IDENTIFIER_
       {
         YR_RULE* rule = yr_parser_reduce_rule_declaration_phase_1(
-            yyscanner, (int32_t) $1, $3, $4, $7, $6);
+            yyscanner, (int32_t) $1, $3);
 
         ERROR_IF(rule == NULL);
 
         $<rule>$ = rule;
       }
+      tags '{' meta strings
+      {
+        YR_RULE* rule = $<rule>4; // rule created in phase 1
+
+        rule->tags = $5;
+        rule->metas = $7;
+        rule->strings = $8;
+      }
       condition '}'
       {
-        YR_RULE* rule = $<rule>8; // rule created in phase 1
+        YR_RULE* rule = $<rule>4; // rule created in phase 1
 
         compiler->last_result = yr_parser_reduce_rule_declaration_phase_2(
             yyscanner, rule);
@@ -430,6 +456,19 @@ meta_declaration
 
         ERROR_IF($$ == NULL);
       }
+    | _IDENTIFIER_ '=' '-' _NUMBER_
+      {
+        $$ = yr_parser_reduce_meta_declaration(
+            yyscanner,
+            META_TYPE_INTEGER,
+            $1,
+            NULL,
+            -$4);
+
+        yr_free($1);
+
+        ERROR_IF($$ == NULL);
+      }
     | _IDENTIFIER_ '=' _TRUE_
       {
         $$ = yr_parser_reduce_meta_declaration(
@@ -466,15 +505,20 @@ string_declarations
 
 
 string_declaration
-    : _STRING_IDENTIFIER_ '=' _TEXT_STRING_ string_modifiers
+    : _STRING_IDENTIFIER_ '='
+      {
+        compiler->error_line = yyget_lineno(yyscanner);
+      }
+      _TEXT_STRING_ string_modifiers
       {
         $$ = yr_parser_reduce_string_declaration(
-            yyscanner, (int32_t) $4, $1, $3);
+            yyscanner, (int32_t) $5, $1, $4);
 
         yr_free($1);
-        yr_free($3);
+        yr_free($4);
 
         ERROR_IF($$ == NULL);
+        compiler->error_line = 0;
       }
     | _STRING_IDENTIFIER_ '='
       {
@@ -870,6 +914,13 @@ boolean_expression
       {
         if ($1.type == EXPRESSION_TYPE_STRING)
         {
+          if ($1.value.sized_string != NULL)
+          {
+            yywarning(yyscanner,
+              "Using literal string \"%s\" in a boolean operation.",
+              $1.value.sized_string->c_string);
+          }
+
           compiler->last_result = yr_parser_emit(
               yyscanner, OP_STR_TO_BOOL, NULL);
 
@@ -1586,6 +1637,7 @@ primary_expression
         ERROR_IF(compiler->last_result != ERROR_SUCCESS);
 
         $$.type = EXPRESSION_TYPE_STRING;
+        $$.value.sized_string = sized_string;
       }
     | _STRING_COUNT_
       {
@@ -1683,6 +1735,7 @@ primary_expression
               break;
             case OBJECT_TYPE_STRING:
               $$.type = EXPRESSION_TYPE_STRING;
+              $$.value.sized_string = NULL;
               break;
             default:
               yr_compiler_set_error_extra_info_fmt(
