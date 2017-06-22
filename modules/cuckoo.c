@@ -46,23 +46,55 @@ define_function(network_dns_lookup)
   YR_OBJECT* network_obj = parent();
 
   json_t* network_json = (json_t*) network_obj->data;
-  json_t* dns_json = json_object_get(network_json, "dns");
   json_t* value;
 
   uint64_t result = 0;
   size_t index;
 
-  char* ip;
+  // Recent versions of Cuckoo generate domain resolution information with
+  // this format:
+  //
+  //       "domains": [
+  //           {
+  //               "ip": "192.168.0.1",
+  //               "domain": "foo.bar.com"
+  //           }
+  //        ]
+  //
+  // But older versions with this other format:
+  //
+  //       "dns": [
+  //           {
+  //               "ip": "192.168.0.1",
+  //               "hostname": "foo.bar.com"
+  //           }
+  //        ]
+  //
+  // Additionally, the newer versions also have a "dns" field. So, let's try
+  // to locate the "domains" field first, if not found fall back to the older
+  // format.
+
+  char* field_name = "domain";
   char* hostname;
+  char* ip;
 
-  json_array_foreach(dns_json, index, value)
+  json_t* dns_info_json = json_object_get(network_json, "domains");
+
+  if (dns_info_json == NULL)
   {
-    json_unpack(value, "{s:s, s:s}", "ip", &ip, "hostname", &hostname);
+    dns_info_json = json_object_get(network_json, "dns");
+    field_name = "hostname";
+  }
 
-    if (yr_re_match(regexp_argument(1), hostname) > 0)
+  json_array_foreach(dns_info_json, index, value)
+  {
+    if (json_unpack(value, "{s:s, s:s}", "ip", &ip, field_name, &hostname) == 0)
     {
-      result = 1;
-      break;
+      if (yr_re_match(regexp_argument(1), hostname) > 0)
+      {
+        result = 1;
+        break;
+      }
     }
   }
 
@@ -76,7 +108,7 @@ define_function(network_dns_lookup)
 
 uint64_t http_request(
     YR_OBJECT* network_obj,
-    RE_CODE uri_regexp,
+    RE* uri_regexp,
     int methods)
 {
   json_t* network_json = (json_t*) network_obj->data;
@@ -91,14 +123,15 @@ uint64_t http_request(
 
   json_array_foreach(http_json, index, value)
   {
-    json_unpack(value, "{s:s, s:s}", "uri", &uri, "method", &method);
-
-    if (((methods & METHOD_GET && strcasecmp(method, "get") == 0) ||
-         (methods & METHOD_POST && strcasecmp(method, "post") == 0)) &&
-         yr_re_match(uri_regexp, uri) > 0)
+    if (json_unpack(value, "{s:s, s:s}", "uri", &uri, "method", &method) == 0)
     {
-      result = 1;
-      break;
+      if (((methods & METHOD_GET && strcasecmp(method, "get") == 0) ||
+           (methods & METHOD_POST && strcasecmp(method, "post") == 0)) &&
+           yr_re_match(uri_regexp, uri) > 0)
+      {
+        result = 1;
+        break;
+      }
     }
   }
 

@@ -31,8 +31,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <openssl/sha.h>
 
 #if _WIN32 || __CYGWIN__
+
+#ifndef PRIu64
 #define PRIu64 "%I64d"
+#endif
+
+#ifndef PRIx64
 #define PRIx64 "%I64x"
+#endif
+
 #else
 #include <inttypes.h>
 #endif
@@ -102,7 +109,7 @@ int add_to_cache(
   key.length = length;
 
   if (copy == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   return yr_hash_table_add_raw_key(
       hash_table,
@@ -241,7 +248,7 @@ define_function(data_md5)
     {
       // If offset is not within current block and we already
       // past the first block then the we are trying to compute
-      // the checksum over a range of non contiguos blocks. As
+      // the checksum over a range of non contiguous blocks. As
       // range contains gaps of undefined data the checksum is
       // undefined.
 
@@ -325,7 +332,7 @@ define_function(data_sha1)
     {
       // If offset is not within current block and we already
       // past the first block then the we are trying to compute
-      // the checksum over a range of non contiguos blocks. As
+      // the checksum over a range of non contiguous blocks. As
       // range contains gaps of undefined data the checksum is
       // undefined.
 
@@ -408,7 +415,7 @@ define_function(data_sha256)
     {
       // If offset is not within current block and we already
       // past the first block then the we are trying to compute
-      // the checksum over a range of non contiguos blocks. As
+      // the checksum over a range of non contiguous blocks. As
       // range contains gaps of undefined data the checksum is
       // undefined.
 
@@ -477,7 +484,7 @@ define_function(data_checksum32)
     {
       // If offset is not within current block and we already
       // past the first block then the we are trying to compute
-      // the checksum over a range of non contiguos blocks. As
+      // the checksum over a range of non contiguous blocks. As
       // range contains gaps of undefined data the checksum is
       // undefined.
 

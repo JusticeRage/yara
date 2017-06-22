@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2007-2014. The YARA Authors. All Rights Reserved.
+Copyright (c) 2016. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,65 +27,74 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef YR_STRUTILS_H
-#define YR_STRUTILS_H
-
-#include <assert.h>
-#include <stdlib.h>
+#ifndef YR_ENDIAN_H
+#define YR_ENDIAN_H
 
 #include <yara/integers.h>
 
-// Cygwin already has these functions.
-#if defined(_WIN32) && !defined(__CYGWIN__)
-#if defined(_MSC_VER) && _MSC_VER < 1900
-#define snprintf _snprintf
-#endif
-#define strcasecmp _stricmp
-#define strncasecmp _strnicmp
+
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_bswap16)
+#    define yr_bswap16(x) __builtin_bswap16(x)
+#  endif
 #endif
 
+#if !defined(yr_bswap16) && defined(_MSC_VER)
+#  define yr_bswap16(x) _byteswap_ushort(x)
+#endif
 
-uint64_t xtoi(
-    const char* hexstr);
-
-
-#if !HAVE_STRLCPY && !defined(strlcpy)
-size_t strlcpy(
-    char *dst,
-    const char *src,
-    size_t size);
+#if !defined(yr_bswap16)
+uint16_t _yr_bswap16(uint16_t x);
+# define yr_bswap16(x) _yr_bswap16(x)
 #endif
 
 
-#if !HAVE_STRLCAT && !defined(strlcat)
-size_t strlcat(
-    char *dst,
-    const char *src,
-    size_t size);
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_bswap32)
+#    define yr_bswap32(x) __builtin_bswap32(x)
+#  endif
+#endif
+
+#if !defined(yr_bswap32) && defined(_MSC_VER)
+#  define yr_bswap32(x) _byteswap_ulong(x)
+#endif
+
+#if !defined(yr_bswap32)
+uint32_t _yr_bswap32(uint32_t x);
+#define yr_bswap32(x) _yr_bswap32(x)
 #endif
 
 
-#if !HAVE_MEMMEM && !defined(memmem)
-void* memmem(
-    const void *haystack,
-    size_t haystack_size,
-    const void *needle,
-    size_t needle_size);
+#if defined(__has_builtin)
+#  if __has_builtin(__builtin_bswap64)
+#    define yr_bswap64(x) __builtin_bswap64(x)
+#  endif
+#endif
+
+#if !defined(yr_bswap64) && defined(_MSC_VER)
+#  define yr_bswap64(x) _byteswap_uint64(x)
+#endif
+
+#if !defined(yr_bswap64)
+uint64_t _yr_bswap64(uint64_t x);
+#define yr_bswap64(x) _yr_bswap64(x)
 #endif
 
 
-int strnlen_w(
-    const char* w_str);
-
-
-int strcmp_w(
-    const char* w_str,
-    const char* str);
-
-
-size_t strlcpy_w(
-    char* dst,
-    const char* w_src,
-    size_t n);
+#if defined(WORDS_BIGENDIAN)
+#define yr_le16toh(x) yr_bswap16(x)
+#define yr_le32toh(x) yr_bswap32(x)
+#define yr_le64toh(x) yr_bswap64(x)
+#define yr_be16toh(x) (x)
+#define yr_be32toh(x) (x)
+#define yr_be64toh(x) (x)
+#else
+#define yr_le16toh(x) (x)
+#define yr_le32toh(x) (x)
+#define yr_le64toh(x) (x)
+#define yr_be16toh(x) yr_bswap16(x)
+#define yr_be32toh(x) yr_bswap32(x)
+#define yr_be64toh(x) yr_bswap64(x)
+#endif
 
 #endif

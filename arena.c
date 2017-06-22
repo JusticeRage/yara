@@ -56,7 +56,7 @@ typedef struct _ARENA_FILE_HEADER
 {
   char      magic[4];
   uint32_t  size;
-  uint8_t   version;
+  uint32_t  version;
 
 } ARENA_FILE_HEADER;
 
@@ -146,6 +146,7 @@ YR_ARENA_PAGE* _yr_arena_page_for_address(
     if ((uint8_t*) address >= page->address &&
         (uint8_t*) address < page->address + page->used)
       return page;
+
     page = page->next;
   }
 
@@ -195,7 +196,7 @@ int _yr_arena_make_relocatable(
     reloc = (YR_RELOC*) yr_malloc(sizeof(YR_RELOC));
 
     if (reloc == NULL)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     reloc->offset = (uint32_t) (base_offset + offset);
     reloc->next = NULL;
@@ -241,14 +242,14 @@ int yr_arena_create(
   new_arena = (YR_ARENA*) yr_malloc(sizeof(YR_ARENA));
 
   if (new_arena == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   new_page = _yr_arena_new_page(initial_size);
 
   if (new_page == NULL)
   {
     yr_free(new_arena);
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
   }
 
   new_arena->page_list_head = new_page;
@@ -316,7 +317,7 @@ void yr_arena_destroy(
 //    YR_ARENA* arena  - Pointer to the arena.
 //
 // Returns:
-//    A pointer to the arena's data. NULL if the no data has been written to
+//    A pointer to the arena's data. NULL if no data has been written to
 //    the arena yet.
 //
 
@@ -334,7 +335,7 @@ void* yr_arena_base_address(
 // yr_arena_next_address
 //
 // Given an address and an offset, returns the address where
-// address + offset resides. The arena is a collection of non-contigous
+// address + offset resides. The arena is a collection of non-contiguous
 // regions of memory (pages), if address is pointing at the end of a page,
 // address + offset could cross the page boundary and point at somewhere
 // within the next page, this function handles these situations. It works
@@ -437,7 +438,7 @@ int yr_arena_coalesce(
   big_page = _yr_arena_new_page(total_size);
 
   if (big_page == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   // Copy data from current pages to the big page and adjust relocs.
   page = arena->page_list_head;
@@ -449,7 +450,7 @@ int yr_arena_coalesce(
 
     reloc = page->reloc_list_head;
 
-    while(reloc != NULL)
+    while (reloc != NULL)
     {
       reloc->offset += (uint32_t) big_page->used;
       reloc = reloc->next;
@@ -532,7 +533,7 @@ int yr_arena_reserve_memory(
   if (size > free_space(arena->current_page))
   {
     if (arena->flags & ARENA_FLAGS_FIXED_SIZE)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     // Requested space is bigger than current page's empty space,
     // lets calculate the size for a new page.
@@ -551,7 +552,7 @@ int yr_arena_reserve_memory(
           new_page_size);
 
       if (new_page_address == NULL)
-        return ERROR_INSUFICIENT_MEMORY;
+        return ERROR_INSUFFICIENT_MEMORY;
 
       arena->current_page->address = new_page_address;
       arena->current_page->size = new_page_size;
@@ -561,7 +562,7 @@ int yr_arena_reserve_memory(
       new_page = _yr_arena_new_page(new_page_size);
 
       if (new_page == NULL)
-        return ERROR_INSUFICIENT_MEMORY;
+        return ERROR_INSUFFICIENT_MEMORY;
 
       new_page->prev = arena->current_page;
       arena->current_page->next = new_page;
@@ -608,7 +609,7 @@ int yr_arena_allocate_memory(
 // yr_arena_allocate_struct
 //
 // Allocates a structure within the arena. This function is similar to
-// yr_arena_allocate_memory but additionaly receives a variable-length
+// yr_arena_allocate_memory but additionally receives a variable-length
 // list of offsets within the structure where pointers reside. This allows
 // the arena to keep track of pointers that must be adjusted when memory
 // is relocated. This is an example on how to invoke this function:
@@ -861,7 +862,7 @@ int yr_arena_duplicate(
     if (new_reloc == NULL)
     {
       yr_arena_destroy(new_arena);
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
     }
 
     new_reloc->offset = reloc->offset;

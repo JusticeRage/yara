@@ -15,8 +15,7 @@ You should have received a copy of the GNU General Public License
 along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _MANAPE_DATA_H_
-#define _MANAPE_DATA_H_
+#pragma once
 
 #include <stdint.h>
 
@@ -37,5 +36,3 @@ typedef struct manape_data_t {
 	uint32_t				number_of_sections;
 	manape_file_portion		version_info;
 } manape_data;
-
-#endif // !_MANAPE_DATA_H_d

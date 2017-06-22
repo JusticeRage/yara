@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2013. The YARA Authors. All Rights Reserved.
+Copyright (c) 2016. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,42 +27,13 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <yara.h>
+#include <strings.h>
 
-#ifndef YR_MUTEX_H
-#define YR_MUTEX_H
+int main (int argc, char **argv)
+{
+  // make sure that versions defined in configure.ac and in
+  // libyara/include/yara/libyara.h are in sync.
 
-
-
-#if defined(_WIN32) || defined(__CYGWIN__)
-
-typedef HANDLE SEMAPHORE;
-typedef CRITICAL_SECTION MUTEX;
-typedef HANDLE THREAD;
-
-typedef DWORD YR_THREAD_ID;
-typedef DWORD YR_THREAD_STORAGE_KEY;
-typedef HANDLE YR_MUTEX;
-
-#else
-
-#include <pthread.h>
-
-typedef pthread_t YR_THREAD_ID;
-typedef pthread_key_t YR_THREAD_STORAGE_KEY;
-typedef pthread_mutex_t YR_MUTEX;
-
-#endif
-
-YR_THREAD_ID yr_current_thread_id(void);
-
-int yr_mutex_create(YR_MUTEX*);
-int yr_mutex_destroy(YR_MUTEX*);
-int yr_mutex_lock(YR_MUTEX*);
-int yr_mutex_unlock(YR_MUTEX*);
-
-int yr_thread_storage_create(YR_THREAD_STORAGE_KEY*);
-int yr_thread_storage_destroy(YR_THREAD_STORAGE_KEY*);
-int yr_thread_storage_set_value(YR_THREAD_STORAGE_KEY*, void*);
-void* yr_thread_storage_get_value(YR_THREAD_STORAGE_KEY*);
-
-#endif
+  return strcmp(PACKAGE_VERSION, YR_VERSION);
+}

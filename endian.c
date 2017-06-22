@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2007-2015. The YARA Authors. All Rights Reserved.
+Copyright (c) 2017. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,40 +27,27 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef YR_INTEGERS_H
-#define YR_INTEGERS_H
+#include <yara/endian.h>
 
-/* Integer type definitions
- */
-#if ( defined( _MSC_VER ) && ( _MSC_VER < 1600 ) ) || ( defined( __BORLANDC__ ) && ( __BORLANDC__ <= 0x0560 ) )
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/* Microsoft Visual Studio C++ before Visual Studio 2010 or earlier versions of the Borland C++ Builder
- * do not support the (u)int#_t type definitions but have __int# defintions instead
- */
-typedef __int8 int8_t;
-typedef unsigned __int8 uint8_t;
-typedef __int16 int16_t;
-typedef unsigned __int16 uint16_t;
-typedef __int32 int32_t;
-typedef unsigned __int32 uint32_t;
-typedef __int64 int64_t;
-typedef unsigned __int64 uint64_t;
-
-#ifdef __cplusplus
+uint16_t _yr_bswap16(uint16_t x)
+{
+  return (x >> 8 | x << 8);
 }
-#endif
 
-#else
+uint32_t _yr_bswap32(uint32_t x)
+{
+  return ((((x) & 0xff000000) >> 24) | (((x) & 0x00ff0000) >>  8) |
+          (((x) & 0x0000ff00) <<  8) | (((x) & 0x000000ff) << 24));
+}
 
-/* Other "compilers" and later versions of Microsoft Visual Studio C++ and
- * Borland C/C++ define the types in <stdint.h>
- */
-#include <stdint.h>
-
-#endif
-
-#endif
+uint64_t _yr_bswap64(uint64_t x)
+{
+  return ((((x) & 0xff00000000000000ull) >> 56)
+        | (((x) & 0x00ff000000000000ull) >> 40)
+        | (((x) & 0x0000ff0000000000ull) >> 24)
+        | (((x) & 0x000000ff00000000ull) >> 8)
+        | (((x) & 0x00000000ff000000ull) << 8)
+        | (((x) & 0x0000000000ff0000ull) << 24)
+        | (((x) & 0x000000000000ff00ull) << 40)
+        | (((x) & 0x00000000000000ffull) << 56));
+}

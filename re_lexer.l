@@ -47,7 +47,7 @@ with noyywrap then we can remove this pragma.
 #include <assert.h>
 #include <setjmp.h>
 
-
+#include <yara/globals.h>
 #include <yara/utils.h>
 #include <yara/error.h>
 #include <yara/limits.h>
@@ -126,6 +126,12 @@ hex_digit     [0-9a-fA-F]
     yyterminate();
   }
 
+  if (hi_bound == 0 && lo_bound == 0)
+  {
+    yyerror(yyscanner, lex_env, "bad repeat interval");
+    yyterminate();
+  }
+
   yylval->range = (hi_bound << 16) | lo_bound;
 
   return _RANGE_;
@@ -141,6 +147,12 @@ hex_digit     [0-9a-fA-F]
   if (value > INT16_MAX)
   {
     yyerror(yyscanner, lex_env, "repeat interval too large");
+    yyterminate();
+  }
+
+  if (value == 0)
+  {
+    yyerror(yyscanner, lex_env, "bad repeat interval");
     yyterminate();
   }
 
@@ -261,7 +273,7 @@ hex_digit     [0-9a-fA-F]
   }
   else
   {
-    yyerror(yyscanner, lex_env, "unexpected end of buffer");
+    yyerror(yyscanner, lex_env, "illegal escape sequence");
     yyterminate();
   }
 }
@@ -312,7 +324,7 @@ hex_digit     [0-9a-fA-F]
   {
     if (!read_escaped_char(yyscanner, &end))
     {
-      yyerror(yyscanner, lex_env, "unexpected end of buffer");
+      yyerror(yyscanner, lex_env, "illegal escape sequence");
       yyterminate();
     }
   }
@@ -390,7 +402,7 @@ hex_digit     [0-9a-fA-F]
     if (i == 6)
       continue;
 
-    // digits 8 and 9 are the lowest two bits in the senventh byte of the
+    // digits 8 and 9 are the lowest two bits in the seventh byte of the
     // vector, let those bits alone.
     if (i == 7)
       LEX_ENV->class_vector[i] |= 0xFC;
@@ -410,7 +422,7 @@ hex_digit     [0-9a-fA-F]
   }
   else
   {
-    yyerror(yyscanner, lex_env, "unexpected end of buffer");
+    yyerror(yyscanner, lex_env, "illegal escape sequence");
     yyterminate();
   }
 }
@@ -519,24 +531,24 @@ int read_escaped_char(
     yyscan_t yyscanner,
     uint8_t* escaped_char)
 {
-  char text[4];
+  char text[4] = {0, 0, 0, 0};
 
   text[0] = '\\';
   text[1] = RE_YY_INPUT(yyscanner);
 
-  if (text[1] == EOF)
+  if (text[1] == EOF || text[1] == 0)
     return 0;
 
   if (text[1] == 'x')
   {
     text[2] = RE_YY_INPUT(yyscanner);
 
-    if (text[2] == EOF)
+    if (!isxdigit(text[2]))
       return 0;
 
     text[3] = RE_YY_INPUT(yyscanner);
 
-    if (text[3] == EOF)
+    if (!isxdigit(text[3]))
       return 0;
   }
 
@@ -546,15 +558,12 @@ int read_escaped_char(
 }
 
 
-extern YR_THREAD_STORAGE_KEY recovery_state_key;
-
-
 void yyfatal(
     yyscan_t yyscanner,
     const char *error_message)
 {
   jmp_buf* recovery_state = (jmp_buf*) yr_thread_storage_get_value(
-      &recovery_state_key);
+      &yr_recovery_state_key);
 
   longjmp(*recovery_state, 1);
 }
@@ -584,8 +593,7 @@ void yyerror(
 
 int yr_parse_re_string(
   const char* re_string,
-  int flags,
-  RE** re,
+  RE_AST** re_ast,
   RE_ERROR* error)
 {
   yyscan_t yyscanner;
@@ -594,25 +602,23 @@ int yr_parse_re_string(
 
   lex_env.last_error_code = ERROR_SUCCESS;
 
-  yr_thread_storage_set_value(&recovery_state_key, &recovery_state);
+  yr_thread_storage_set_value(&yr_recovery_state_key, &recovery_state);
 
   if (setjmp(recovery_state) != 0)
     return ERROR_INTERNAL_FATAL_ERROR;
 
-  FAIL_ON_ERROR(yr_re_create(re));
-
-  (*re)->flags = flags;
+  FAIL_ON_ERROR(yr_re_ast_create(re_ast));
 
   yylex_init(&yyscanner);
-  yyset_extra(*re, yyscanner);
+  yyset_extra(*re_ast, yyscanner);
   yy_scan_string(re_string, yyscanner);
   yyparse(yyscanner, &lex_env);
   yylex_destroy(yyscanner);
 
   if (lex_env.last_error_code != ERROR_SUCCESS)
   {
-    yr_re_destroy(*re);
-    *re = NULL;
+    yr_re_ast_destroy(*re_ast);
+    *re_ast = NULL;
 
     strlcpy(
         error->message,

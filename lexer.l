@@ -50,6 +50,12 @@ with noyywrap then we can remove this pragma.
 #include <string.h>
 #include <setjmp.h>
 
+#if defined(_WIN32) || defined(__CYGWIN__)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <yara/integers.h>
 #include <yara/lexer.h>
 #include <yara/sizedstr.h>
@@ -541,6 +547,7 @@ u?int(8|16|32)(be)? {
 <str>\\(.|\n) {
 
   yyerror(yyscanner, compiler, "illegal escape sequence");
+  yyterminate();
 }
 
 
@@ -563,6 +570,7 @@ u?int(8|16|32)(be)? {
   else
   {
     yyerror(yyscanner, compiler, "empty regular expression");
+    yyterminate();
   }
 
   BEGIN(INITIAL);
@@ -581,6 +589,13 @@ u?int(8|16|32)(be)? {
 <regexp>\\. {
 
   LEX_CHECK_SPACE_OK("\\.", yyextra->lex_buf_len, LEX_BUF_SIZE);
+
+  if (yytext[1] == 0)
+  {
+    yyerror(yyscanner, compiler, "malformed regular expression");
+    yyterminate();
+  }
+
   *yyextra->lex_buf_ptr++ = yytext[0];
   *yyextra->lex_buf_ptr++ = yytext[1];
   yyextra->lex_buf_len += 2;
@@ -613,7 +628,7 @@ u?int(8|16|32)(be)? {
 }
 
 
-\{(({hexdigit}|[ \-|\?\[\]\(\)\n\t]|\/\*[^*]*\*\/)+|\/\/.*)+\}  {
+\{(({hexdigit}|[ \-|\?\[\]\(\)\n\r\t]|\/\*[^*]*\*\/)+|\/\/.*)+\}  {
   // Match hex-digits with whitespace or comments. The latter are stripped
   // out by hex_lexer.l
 
@@ -670,7 +685,7 @@ void yywarning(
   compiler->callback(
       YARA_ERROR_LEVEL_WARNING,
       file_name,
-      yyget_lineno(yyscanner),
+      compiler->current_line ? compiler->current_line : yyget_lineno(yyscanner),
       message,
       compiler->user_data);
 
@@ -705,12 +720,12 @@ void yyerror(
 
   compiler->errors++;
 
-  if (compiler->error_line != 0)
-    compiler->last_error_line = compiler->error_line;
+  if (compiler->current_line != 0)
+    compiler->last_error_line = compiler->current_line;
   else
     compiler->last_error_line = yyget_lineno(yyscanner);
 
-  compiler->error_line = 0;
+  compiler->current_line = 0;
 
   if (compiler->file_name_stack_ptr > 0)
   {
@@ -803,6 +818,53 @@ int yr_lex_parse_rules_file(
 
   yyset_in(rules_file, yyscanner);
   yyset_extra(compiler, yyscanner);
+  yyparse(yyscanner, compiler);
+  yylex_destroy(yyscanner);
+
+  return compiler->errors;
+}
+
+
+int yr_lex_parse_rules_fd(
+  YR_FILE_DESCRIPTOR rules_fd,
+  YR_COMPILER* compiler)
+{
+  yyscan_t yyscanner;
+  char buf[1024];
+
+  compiler->errors = 0;
+
+  if (setjmp(compiler->error_recovery) != 0)
+    return compiler->errors;
+
+  yylex_init(&yyscanner);
+
+  #if YYDEBUG
+  yydebug = 1;
+  #endif
+
+  yyset_extra(compiler, yyscanner);
+  while (1)
+  {
+#if defined(_WIN32) || defined(__CYGWIN__)
+    DWORD len;
+    if (!ReadFile(rules_fd, buf, sizeof(buf), &len, NULL))
+      break;
+#else
+    ssize_t len = read(rules_fd, buf, sizeof(buf));
+    if (len < 0)
+    {
+      if (errno == EINTR)
+        continue;
+      else
+        break;
+    }
+#endif
+    if (len == 0)
+      break;
+    yy_scan_bytes(buf, len, yyscanner);
+  }
+
   yyparse(yyscanner, compiler);
   yylex_destroy(yyscanner);
 

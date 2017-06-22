@@ -2,7 +2,7 @@ cmake_minimum_required (VERSION 2.6)
 project (yara)
 find_package (Threads)
 
-add_library(yara SHARED yara_wrapper.cpp yara_errors.cpp ahocorasick.c arena.c atoms.c compiler.c exec.c exefiles.c filemap.c grammar.c hash.c hex_grammar.c hex_lexer.c lexer.c libyara.c mem.c modules.c object.c parser.c proc.c re.c re_grammar.c re_lexer.c rules.c scan.c sizedstr.c stream.c strutils.c threading.c
+add_library(yara SHARED yara_wrapper.cpp yara_errors.cpp ahocorasick.c arena.c atoms.c compiler.c exec.c exefiles.c filemap.c grammar.c hash.c hex_grammar.c hex_lexer.c lexer.c libyara.c mem.c modules.c object.c parser.c proc.c re.c re_grammar.c re_lexer.c rules.c scan.c sizedstr.c stream.c strutils.c threading.c endian.c
 	                modules/manape.c)
 target_link_libraries (yara manacommons ${CMAKE_THREAD_LIBS_INIT} ${Boost_LIBRARIES})
 

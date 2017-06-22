@@ -352,6 +352,7 @@ int _yr_process_attach(
     int pid,
     YR_PROC_ITERATOR_CTX* context)
 {
+  int status;
   char buffer[256];
 
   context->pid = pid;
@@ -377,6 +378,22 @@ int _yr_process_attach(
 
   if (ptrace(PTRACE_ATTACH, pid, NULL, 0) == -1)
   {
+    fclose(context->maps);
+    context->maps = NULL;
+
+    close(context->mem_fd);
+    context->mem_fd = -1;
+
+    return ERROR_COULD_NOT_ATTACH_TO_PROCESS;
+  }
+
+  status = 0;
+  if (waitpid(pid, &status, 0) == -1)
+  {
+    // this is a strange error state where we attached but the proc didn't
+    // stop. Try to detach and clean up.
+    ptrace(PTRACE_DETACH, context->pid, NULL, 0);
+
     fclose(context->maps);
     context->maps = NULL;
 
@@ -483,7 +500,7 @@ int yr_process_open_iterator(
       yr_malloc(sizeof(YR_PROC_ITERATOR_CTX));
 
   if (context == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   iterator->context = context;
   iterator->first = _yr_get_first_block;

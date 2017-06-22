@@ -1,4 +1,4 @@
-AC_INIT([yara], [3.5.0], [vmalvarez@virustotal.com])
+AC_INIT([yara], [3.6.0], [vmalvarez@virustotal.com])
 
 AC_CONFIG_SRCDIR([yara.c])
 
@@ -29,8 +29,13 @@ case $host_alias in
 esac
 
 case $host_os in
-    darwin*) CFLAGS="$CFLAGS -I/opt/local/include" ;;
+    darwin*) CFLAGS="$CFLAGS -I/opt/local/include"
+             # Starting with Mac OS X 10.11 (El Capitan) the OpenSSL headers
+             # are in /usr/local/opt/openssl/include
+             CFLAGS="$CFLAGS -I/usr/local/opt/openssl/include" ;;
 esac
+
+AC_C_BIGENDIAN
 
 ACX_PTHREAD(
     [LIBS="$PTHREAD_LIBS $LIBS"
@@ -42,11 +47,23 @@ AC_CHECK_LIB(m, isnan)
 AC_CHECK_LIB(m, log2)
 AC_CHECK_FUNCS([strlcpy strlcat memmem timegm])
 
-
 AC_ARG_ENABLE([debug],
   [AS_HELP_STRING([--enable-debug], [compiles with -g option])],
   [if test x$enableval = xyes; then
-    CFLAGS="$CFLAGS -g"
+    debug=true
+  fi])
+
+AC_ARG_ENABLE([optimization],
+  [AS_HELP_STRING([--disable-optimization], [disable compiler optimizations with -O0])],
+  [if test x$enableval = xyes; then
+    optimization=false
+  fi],
+  [optimization=true])
+
+AC_ARG_ENABLE([address-sanitizer],
+  [AS_HELP_STRING([--enable-address-sanitizer], [compiles with -fsanitize=address])],
+  [if test x$enableval = xyes; then
+    address_sanitizer=true
   fi])
 
 AC_ARG_ENABLE([profiling],
@@ -68,6 +85,8 @@ AC_ARG_ENABLE([cuckoo],
   [AS_HELP_STRING([--enable-cuckoo], [enable cuckoo module])],
   [if test x$enableval = xyes; then
     build_cuckoo_module=true
+    AC_CHECK_HEADERS([jansson.h],,
+      AC_MSG_ERROR([please install Jansson library]))
     AC_CHECK_LIB(jansson, json_loadb,,
       AC_MSG_ERROR([please install Jansson library]))
     CFLAGS="$CFLAGS -DCUCKOO_MODULE"
@@ -77,9 +96,18 @@ AC_ARG_ENABLE([magic],
   [AS_HELP_STRING([--enable-magic], [enable magic module])],
   [if test x$enableval = xyes; then
     build_magic_module=true
+    AC_CHECK_HEADERS([magic.h],,
+      AC_MSG_ERROR([please install libmagic library]))
     AC_CHECK_LIB(magic, magic_open,,
       AC_MSG_ERROR([please install libmagic library]))
     CFLAGS="$CFLAGS -DMAGIC_MODULE"
+  fi])
+
+AC_ARG_ENABLE([dotnet],
+  [AS_HELP_STRING([--enable-dotnet], [enable dotnet module])],
+  [if test x$enableval = xyes; then
+    build_dotnet_module=true
+    CFLAGS="$CFLAGS -DDOTNET_MODULE"
   fi])
 
 AC_ARG_WITH([crypto],
@@ -88,6 +116,14 @@ AC_ARG_WITH([crypto],
 
 AS_IF([test "x$with_crypto" != "xno"],
   [
+    AC_CHECK_HEADERS([openssl/md5.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/sha.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/asn1.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/crypto.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/bio.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/pkcs7.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/x509.h],, [have_crypto=no])
+    AC_CHECK_HEADERS([openssl/safestack.h],, [have_crypto=no])
     AC_CHECK_LIB(crypto, MD5_Init,, [have_crypto=no])
     AC_CHECK_LIB(crypto, MD5_Update,, [have_crypto=no])
     AC_CHECK_LIB(crypto, MD5_Final,, [have_crypto=no])
@@ -109,7 +145,7 @@ AS_IF([test "x$have_crypto" = "xno"],
         AC_MSG_WARN([
 *******************************************************************************
   Could not find OpenSSL library. The "hash" module and some features in "pe"
-  module has been disabled. If you want to enable all features please install
+  module have been disabled. If you want to enable all features please install
   it and run this script again.
 *******************************************************************************
         ])
@@ -120,13 +156,16 @@ AS_IF([test "x$have_crypto" = "xno"],
     CFLAGS="$CFLAGS -DHASH_MODULE"
   ])
 
+AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
+AM_CONDITIONAL([OPTIMIZATION], [test x$optimization = xtrue])
+AM_CONDITIONAL([ADDRESS_SANITIZER], [test x$address_sanitizer = xtrue])
 AM_CONDITIONAL([CUCKOO_MODULE], [test x$build_cuckoo_module = xtrue])
 AM_CONDITIONAL([MAGIC_MODULE], [test x$build_magic_module = xtrue])
 AM_CONDITIONAL([HASH_MODULE], [test x$build_hash_module = xtrue])
+AM_CONDITIONAL([DOTNET_MODULE], [test x$build_dotnet_module = xtrue])
 AM_CONDITIONAL([GCC], [test "x$GCC" = xyes])
 
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([libyara/Makefile])
-AC_CONFIG_HEADERS([config.h])
 
 AC_OUTPUT

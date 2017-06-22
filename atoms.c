@@ -89,6 +89,10 @@ will end up using the "Look" atom alone, but in /a(bcd|efg)h/ atoms "bcd" and
 #include <yara/types.h>
 
 
+#define YR_MAX_ATOM_QUALITY   100000
+#define YR_MIN_ATOM_QUALITY  -100000
+
+
 #define append_current_leaf_to_node(node) \
     if (atom_tree->current_leaf != NULL) \
     { \
@@ -173,10 +177,10 @@ int yr_atoms_min_quality(
   YR_ATOM_LIST_ITEM* atom;
 
   int quality;
-  int min_quality = 100000;
+  int min_quality = YR_MAX_ATOM_QUALITY;
 
   if (atom_list == NULL)
-    return 0;
+    return YR_MIN_ATOM_QUALITY;
 
   atom = atom_list;
 
@@ -343,7 +347,7 @@ YR_ATOM_LIST_ITEM* _yr_atoms_list_concat(
 
 int _yr_atoms_choose(
     ATOM_TREE_NODE* node,
-    YR_ATOM_LIST_ITEM** choosen_atoms,
+    YR_ATOM_LIST_ITEM** chosen_atoms,
     int* atoms_quality)
 {
   ATOM_TREE_NODE* child;
@@ -351,10 +355,10 @@ int _yr_atoms_choose(
   YR_ATOM_LIST_ITEM* tail;
 
   int i, quality;
-  int max_quality = -10000;
-  int min_quality = 10000;
+  int max_quality = YR_MIN_ATOM_QUALITY;
+  int min_quality = YR_MAX_ATOM_QUALITY;
 
-  *choosen_atoms = NULL;
+  *chosen_atoms = NULL;
 
   switch (node->type)
   {
@@ -363,7 +367,7 @@ int _yr_atoms_choose(
     item = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
     if (item == NULL)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     for (i = 0; i < node->atom_length; i++)
       item->atom[i] = node->atom[i];
@@ -374,7 +378,7 @@ int _yr_atoms_choose(
     item->backtrack = 0;
     item->next = NULL;
 
-    *choosen_atoms = item;
+    *chosen_atoms = item;
     *atoms_quality = _yr_atoms_quality(node->atom, node->atom_length);
     break;
 
@@ -389,8 +393,8 @@ int _yr_atoms_choose(
       if (quality > max_quality)
       {
         max_quality = quality;
-        yr_atoms_list_destroy(*choosen_atoms);
-        *choosen_atoms = item;
+        yr_atoms_list_destroy(*chosen_atoms);
+        *chosen_atoms = item;
       }
       else
       {
@@ -420,8 +424,8 @@ int _yr_atoms_choose(
         while (tail->next != NULL)
           tail = tail->next;
 
-        tail->next = *choosen_atoms;
-        *choosen_atoms = item;
+        tail->next = *chosen_atoms;
+        *chosen_atoms = item;
       }
 
       child = child->next_sibling;
@@ -506,13 +510,13 @@ uint8_t* _yr_atoms_case_combinations(
     sizeof(int)
 
 //
-// _yr_atoms_case_insentive
+// _yr_atoms_case_insensitive
 //
 // For a given list of atoms returns another list of atoms
 // with every case combination.
 //
 
-int _yr_atoms_case_insentive(
+int _yr_atoms_case_insensitive(
     YR_ATOM_LIST_ITEM* atoms,
     YR_ATOM_LIST_ITEM** case_insensitive_atoms)
 {
@@ -544,7 +548,7 @@ int _yr_atoms_case_insentive(
       new_atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
       if (new_atom == NULL)
-        return ERROR_INSUFICIENT_MEMORY;
+        return ERROR_INSUFFICIENT_MEMORY;
 
       for (i = 0; i < atom_length; i++)
         new_atom->atom[i] = atoms_cursor[i];
@@ -594,7 +598,7 @@ int _yr_atoms_wide(
     new_atom = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
     if (new_atom == NULL)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     for (i = 0; i < MAX_ATOM_LENGTH; i++)
       new_atom->atom[i] = 0;
@@ -659,6 +663,9 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
 
         atom_tree->current_leaf->forward_code = re_node->forward_code;
         atom_tree->current_leaf->backward_code = re_node->backward_code;
+
+        assert(atom_tree->current_leaf->forward_code != NULL);
+        assert(atom_tree->current_leaf->backward_code != NULL);
       }
 
       current_leaf = atom_tree->current_leaf;
@@ -697,6 +704,9 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
 
           current_leaf->backward_code = \
               current_leaf->recent_nodes[0]->backward_code;
+
+          assert(current_leaf->forward_code != NULL);
+          assert(current_leaf->backward_code != NULL);
         }
       }
 
@@ -816,6 +826,7 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
       return current_node;
 
     case RE_NODE_ANY:
+    case RE_NODE_RANGE_ANY:
     case RE_NODE_STAR:
     case RE_NODE_CLASS:
     case RE_NODE_MASKED_LITERAL:
@@ -845,7 +856,7 @@ ATOM_TREE_NODE* _yr_atoms_extract_from_re_node(
 // yr_atoms_extract_triplets
 //
 // On certain cases YARA can not extract long enough atoms from a regexp, but
-// can infer them. For example, in the hex string { 01 ?? 02 } the only explict
+// can infer them. For example, in the hex string { 01 ?? 02 } the only explicit
 // atoms are 01 and 02, and both of them are too short to be efficiently used.
 // However YARA can use simultaneously atoms 01 00 02, 01 01 02, 01 02 02,
 // 01 03 02, and so on up to 01 FF 02. Searching for 256 three-bytes atoms is
@@ -889,7 +900,7 @@ int yr_atoms_extract_triplets(
             yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
-          return ERROR_INSUFICIENT_MEMORY;
+          return ERROR_INSUFFICIENT_MEMORY;
 
         atom->atom[0] = left_child->left->value;
         atom->atom[1] = i;
@@ -916,7 +927,7 @@ int yr_atoms_extract_triplets(
             yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
-          return ERROR_INSUFICIENT_MEMORY;
+          return ERROR_INSUFFICIENT_MEMORY;
 
         if (left_child->right->mask == 0xF0)
           shift = 0;
@@ -949,7 +960,7 @@ int yr_atoms_extract_triplets(
             yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
-          return ERROR_INSUFICIENT_MEMORY;
+          return ERROR_INSUFFICIENT_MEMORY;
 
         atom->atom[0] = left_grand_child->right->value;
         atom->atom[1] = i;
@@ -977,7 +988,7 @@ int yr_atoms_extract_triplets(
             yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
         if (atom == NULL)
-          return ERROR_INSUFICIENT_MEMORY;
+          return ERROR_INSUFFICIENT_MEMORY;
 
         if (left_child->right->mask == 0xF0)
           shift = 0;
@@ -1010,38 +1021,38 @@ int yr_atoms_extract_triplets(
 //
 
 int yr_atoms_extract_from_re(
-    RE* re,
+    RE_AST* re_ast,
     int flags,
     YR_ATOM_LIST_ITEM** atoms)
 {
   ATOM_TREE* atom_tree = (ATOM_TREE*) yr_malloc(sizeof(ATOM_TREE));
   ATOM_TREE_NODE* temp;
   YR_ATOM_LIST_ITEM* wide_atoms;
-  YR_ATOM_LIST_ITEM* case_insentive_atoms;
+  YR_ATOM_LIST_ITEM* case_insensitive_atoms;
   YR_ATOM_LIST_ITEM* triplet_atoms;
 
-  int min_atom_quality = 0;
+  int min_atom_quality = YR_MIN_ATOM_QUALITY;
 
   if (atom_tree == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   atom_tree->root_node = _yr_atoms_tree_node_create(ATOM_TREE_OR);
 
   if (atom_tree->root_node == NULL)
   {
     _yr_atoms_tree_destroy(atom_tree);
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
   }
 
   atom_tree->current_leaf = NULL;
 
   atom_tree->root_node = _yr_atoms_extract_from_re_node(
-      re->root_node, atom_tree, atom_tree->root_node);
+      re_ast->root_node, atom_tree, atom_tree->root_node);
 
   if (atom_tree->root_node == NULL)
   {
     _yr_atoms_tree_destroy(atom_tree);
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
   }
 
   if (atom_tree->current_leaf != NULL)
@@ -1073,11 +1084,11 @@ int yr_atoms_extract_from_re(
 
   if (min_atom_quality <= 2)
   {
-    // Choosen atoms contain low quality ones, let's try infering some higher
+    // Chosen atoms contain low quality ones, let's try infering some higher
     // quality atoms.
 
     FAIL_ON_ERROR_WITH_CLEANUP(
-        yr_atoms_extract_triplets(re->root_node, &triplet_atoms),
+        yr_atoms_extract_triplets(re_ast->root_node, &triplet_atoms),
         {
           yr_atoms_list_destroy(*atoms);
           yr_atoms_list_destroy(triplet_atoms);
@@ -1119,14 +1130,14 @@ int yr_atoms_extract_from_re(
   if (flags & STRING_GFLAGS_NO_CASE)
   {
     FAIL_ON_ERROR_WITH_CLEANUP(
-        _yr_atoms_case_insentive(*atoms, &case_insentive_atoms),
+        _yr_atoms_case_insensitive(*atoms, &case_insensitive_atoms),
         {
           yr_atoms_list_destroy(*atoms);
-          yr_atoms_list_destroy(case_insentive_atoms);
+          yr_atoms_list_destroy(case_insensitive_atoms);
           *atoms = NULL;
         });
 
-    *atoms = _yr_atoms_list_concat(*atoms, case_insentive_atoms);
+    *atoms = _yr_atoms_list_concat(*atoms, case_insensitive_atoms);
   }
 
   // No atoms has been extracted, let's add a zero-length atom.
@@ -1136,11 +1147,11 @@ int yr_atoms_extract_from_re(
     *atoms = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
     if (*atoms == NULL)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     (*atoms)->atom_length = 0;
     (*atoms)->backtrack = 0;
-    (*atoms)->forward_code = re->root_node->forward_code;
+    (*atoms)->forward_code = re_ast->root_node->forward_code;
     (*atoms)->backward_code = NULL;
     (*atoms)->next = NULL;
   }
@@ -1162,7 +1173,7 @@ int yr_atoms_extract_from_string(
     YR_ATOM_LIST_ITEM** atoms)
 {
   YR_ATOM_LIST_ITEM* item;
-  YR_ATOM_LIST_ITEM* case_insentive_atoms;
+  YR_ATOM_LIST_ITEM* case_insensitive_atoms;
   YR_ATOM_LIST_ITEM* wide_atoms;
 
   int max_quality;
@@ -1171,7 +1182,7 @@ int yr_atoms_extract_from_string(
   item = (YR_ATOM_LIST_ITEM*) yr_malloc(sizeof(YR_ATOM_LIST_ITEM));
 
   if (item == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   item->forward_code = NULL;
   item->backward_code = NULL;
@@ -1228,14 +1239,14 @@ int yr_atoms_extract_from_string(
   if (flags & STRING_GFLAGS_NO_CASE)
   {
     FAIL_ON_ERROR_WITH_CLEANUP(
-        _yr_atoms_case_insentive(*atoms, &case_insentive_atoms),
+        _yr_atoms_case_insensitive(*atoms, &case_insensitive_atoms),
         {
           yr_atoms_list_destroy(*atoms);
-          yr_atoms_list_destroy(case_insentive_atoms);
+          yr_atoms_list_destroy(case_insensitive_atoms);
           *atoms = NULL;
         });
 
-    *atoms = _yr_atoms_list_concat(*atoms, case_insentive_atoms);
+    *atoms = _yr_atoms_list_concat(*atoms, case_insensitive_atoms);
   }
 
   return ERROR_SUCCESS;

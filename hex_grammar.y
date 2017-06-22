@@ -48,8 +48,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define YYMALLOC yr_malloc
 #define YYFREE yr_free
 
-#define mark_as_not_fast_hex_regexp() \
-    ((RE*) yyget_extra(yyscanner))->flags &= ~RE_FLAGS_FAST_HEX_REGEXP
+#define mark_as_not_fast_regexp() \
+    ((RE_AST*) yyget_extra(yyscanner))->flags &= ~RE_FLAGS_FAST_REGEXP
+
+#define incr_ast_levels() \
+    if (((RE_AST*) yyget_extra(yyscanner))->levels++ > RE_MAX_AST_LEVELS) \
+    { \
+      lex_env->last_error_code = ERROR_INVALID_HEX_STRING; \
+      YYABORT; \
+    }
 
 #define ERROR_IF(x, error) \
     if (x) \
@@ -104,8 +111,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 hex_string
     : '{' tokens '}'
       {
-        RE* re = yyget_extra(yyscanner);
-        re->root_node = $2;
+        RE_AST* re_ast = yyget_extra(yyscanner);
+        re_ast->root_node = $2;
       }
     ;
 
@@ -117,18 +124,22 @@ tokens
       }
     | token token
       {
+        incr_ast_levels();
+
         $$ = yr_re_node_create(RE_NODE_CONCAT, $1, $2);
 
         DESTROY_NODE_IF($$ == NULL, $1);
         DESTROY_NODE_IF($$ == NULL, $2);
 
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
       }
     | token token_sequence token
       {
         RE_NODE* new_concat;
         RE_NODE* leftmost_concat = NULL;
         RE_NODE* leftmost_node = $2;
+
+        incr_ast_levels();
 
         $$ = NULL;
 
@@ -180,7 +191,7 @@ tokens
         DESTROY_NODE_IF($$ == NULL, $2);
         DESTROY_NODE_IF($$ == NULL, $3);
 
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
       }
     ;
 
@@ -192,12 +203,14 @@ token_sequence
       }
     | token_sequence token_or_range
       {
+        incr_ast_levels();
+
         $$ = yr_re_node_create(RE_NODE_CONCAT, $1, $2);
 
         DESTROY_NODE_IF($$ == NULL, $1);
         DESTROY_NODE_IF($$ == NULL, $2);
 
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
       }
     ;
 
@@ -244,8 +257,6 @@ token
 range
     : '[' _NUMBER_ ']'
       {
-        RE_NODE* re_any;
-
         if ($2 <= 0)
         {
           yyerror(yyscanner, lex_env, "invalid jump length");
@@ -260,21 +271,15 @@ range
           YYABORT;
         }
 
-        re_any = yr_re_node_create(RE_NODE_ANY, NULL, NULL);
+        $$ = yr_re_node_create(RE_NODE_RANGE_ANY, NULL, NULL);
 
-        ERROR_IF(re_any == NULL, ERROR_INSUFICIENT_MEMORY);
-
-        $$ = yr_re_node_create(RE_NODE_RANGE, re_any, NULL);
-
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
         $$->start = (int) $2;
         $$->end = (int) $2;
       }
     | '[' _NUMBER_ '-' _NUMBER_ ']'
       {
-        RE_NODE* re_any;
-
         if (lex_env->inside_or &&
             ($2 > STRING_CHAINING_THRESHOLD ||
              $4 > STRING_CHAINING_THRESHOLD) )
@@ -298,21 +303,15 @@ range
           YYABORT;
         }
 
-        re_any = yr_re_node_create(RE_NODE_ANY, NULL, NULL);
+        $$ = yr_re_node_create(RE_NODE_RANGE_ANY, NULL, NULL);
 
-        ERROR_IF(re_any == NULL, ERROR_INSUFICIENT_MEMORY);
-
-        $$ = yr_re_node_create(RE_NODE_RANGE, re_any, NULL);
-
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
         $$->start = (int) $2;
         $$->end = (int) $4;
       }
     | '[' _NUMBER_ '-' ']'
       {
-        RE_NODE* re_any;
-
         if (lex_env->inside_or)
         {
           yyerror(yyscanner, lex_env,
@@ -326,21 +325,15 @@ range
           YYABORT;
         }
 
-        re_any = yr_re_node_create(RE_NODE_ANY, NULL, NULL);
+        $$ = yr_re_node_create(RE_NODE_RANGE_ANY, NULL, NULL);
 
-        ERROR_IF(re_any == NULL, ERROR_INSUFICIENT_MEMORY);
-
-        $$ = yr_re_node_create(RE_NODE_RANGE, re_any, NULL);
-
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
         $$->start = (int) $2;
         $$->end = INT_MAX;
       }
     | '[' '-' ']'
       {
-        RE_NODE* re_any;
-
         if (lex_env->inside_or)
         {
           yyerror(yyscanner, lex_env,
@@ -348,13 +341,9 @@ range
           YYABORT;
         }
 
-        re_any = yr_re_node_create(RE_NODE_ANY, NULL, NULL);
+        $$ = yr_re_node_create(RE_NODE_RANGE_ANY, NULL, NULL);
 
-        ERROR_IF(re_any == NULL, ERROR_INSUFICIENT_MEMORY);
-
-        $$ = yr_re_node_create(RE_NODE_RANGE, re_any, NULL);
-
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
         $$->start = 0;
         $$->end = INT_MAX;
@@ -369,14 +358,15 @@ alternatives
       }
     | alternatives '|' tokens
       {
-        mark_as_not_fast_hex_regexp();
+        mark_as_not_fast_regexp();
+        incr_ast_levels();
 
         $$ = yr_re_node_create(RE_NODE_ALT, $1, $3);
 
         DESTROY_NODE_IF($$ == NULL, $1);
         DESTROY_NODE_IF($$ == NULL, $3);
 
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
       }
     ;
 
@@ -385,7 +375,7 @@ byte
       {
         $$ = yr_re_node_create(RE_NODE_LITERAL, NULL, NULL);
 
-        ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+        ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
         $$->value = (int) $1;
       }
@@ -397,13 +387,13 @@ byte
         {
           $$ = yr_re_node_create(RE_NODE_ANY, NULL, NULL);
 
-          ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+          ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
         }
         else
         {
           $$ = yr_re_node_create(RE_NODE_MASKED_LITERAL, NULL, NULL);
 
-          ERROR_IF($$ == NULL, ERROR_INSUFICIENT_MEMORY);
+          ERROR_IF($$ == NULL, ERROR_INSUFFICIENT_MEMORY);
 
           $$->value = $1 & 0xFF;
           $$->mask = mask;

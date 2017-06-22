@@ -32,8 +32,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 extern char compile_error[1024];
 
-YR_RULES* compile_rule(
-    char* string);
+int compile_rule(
+    char* string,
+    YR_RULES** rules);
+
+
+int count_matches(
+    int message,
+    void* message_data,
+    void* user_data);
 
 
 int matches_blob(
@@ -66,14 +73,17 @@ int read_file(
     }                                                                   \
   } while (0);
 
-#define assert_true_rule_blob(rule, blob)                               \
+#define assert_true_rule_blob_size(rule, blob, size)                    \
   do {                                                                  \
-    if (!matches_blob(rule, (uint8_t*) (blob), sizeof(blob))) {         \
+    if (!matches_blob(rule, (uint8_t*) (blob), size)) {                 \
       fprintf(stderr, "%s:%d: rule does not match (but should)\n",      \
               __FILE__, __LINE__ );                                     \
       exit(EXIT_FAILURE);                                               \
     }                                                                   \
   } while (0);
+
+#define assert_true_rule_blob(rule, blob)               \
+  assert_true_rule_blob_size(rule, blob, sizeof(blob))
 
 #define assert_true_rule_file(rule, filename)                           \
   do {                                                                  \
@@ -102,14 +112,17 @@ int read_file(
     }                                                                   \
   } while (0);
 
-#define assert_false_rule_blob(rule, blob)                              \
+#define assert_false_rule_blob_size(rule, blob, size)                   \
   do {                                                                  \
-    if (matches_blob(rule, (uint8_t*) (blob), sizeof(blob))) {          \
+    if (matches_blob(rule, (uint8_t*) (blob), size)) {                  \
       fprintf(stderr, "%s:%d: rule matches (but shouldn't)\n",          \
               __FILE__, __LINE__ );                                     \
       exit(EXIT_FAILURE);                                               \
     }                                                                   \
   } while (0);
+
+#define assert_false_rule_blob(rule, blob)              \
+  assert_false_rule_blob_size(rule, blob, sizeof(blob))
 
 #define assert_false_rule_file(rule, filename)                          \
   do {                                                                  \
@@ -129,18 +142,12 @@ int read_file(
     free(buf);                                                          \
   } while (0);
 
-#define assert_syntax_correct(rule) do {                                \
-    if (compile_rule(rule) == NULL) {                                   \
-      fprintf(stderr, "%s:%d: rule << %s >> can't be compiled: %s\n",   \
-              __FILE__, __LINE__, rule, compile_error);                 \
-      exit(EXIT_FAILURE);                                               \
-    }                                                                   \
-  } while (0);
-
-#define assert_syntax_error(rule) do {                                  \
-    if (compile_rule(rule) != NULL) {                                   \
-      fprintf(stderr, "%s:%d: rule can be compiled (but shouldn't)\n",  \
-              __FILE__, __LINE__);                                      \
+#define assert_error(rule, error) do {                                  \
+    YR_RULES* rules;                                                    \
+    int result = compile_rule(rule, &rules);                            \
+    if (result != error) {                                              \
+      fprintf(stderr, "%s:%d: expecting error %d but returned %d\n",    \
+              __FILE__, __LINE__, error, result);                       \
       exit(EXIT_FAILURE);                                               \
     }                                                                   \
   } while (0);
@@ -158,8 +165,8 @@ int read_file(
   assert_false_rule("rule test { strings: $a = /" regexp                \
                     "/ condition: $a }", string)
 
-#define assert_regexp_syntax_error(regexp)                      \
-  assert_syntax_error("rule test { strings: $a = /" regexp      \
-                      "/ condition: $a }")
+#define assert_regexp_syntax_error(regexp)                              \
+  assert_error("rule test { strings: $a = /" regexp "/ condition: $a }",\
+               ERROR_INVALID_REGULAR_EXPRESSION)
 
 #endif /* _UTIL_H */

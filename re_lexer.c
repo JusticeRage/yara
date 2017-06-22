@@ -533,7 +533,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 /* Lexical analyzer for regular expressions */
-#line 20 "re_lexer.l"
+#line 33 "re_lexer.l"
 
 /* Disable warnings for unused functions in this file.
 
@@ -551,7 +551,7 @@ with noyywrap then we can remove this pragma.
 #include <assert.h>
 #include <setjmp.h>
 
-
+#include <yara/globals.h>
 #include <yara/utils.h>
 #include <yara/error.h>
 #include <yara/limits.h>
@@ -582,7 +582,7 @@ int read_escaped_char(
 
 #define YY_NO_UNISTD_H 1
 
-#line 573 "re_lexer.c"
+#line 586 "re_lexer.c"
 
 #define INITIAL 0
 #define char_class 1
@@ -856,10 +856,10 @@ YY_DECL
 		}
 
 	{
-#line 86 "re_lexer.l"
+#line 99 "re_lexer.l"
 
 
-#line 850 "re_lexer.c"
+#line 863 "re_lexer.c"
 
 	while ( /*CONSTCOND*/1 )		/* loops until end-of-file is reached */
 		{
@@ -926,7 +926,7 @@ do_action:	/* This label is used only to access EOF actions. */
 
 case 1:
 YY_RULE_SETUP
-#line 88 "re_lexer.l"
+#line 101 "re_lexer.l"
 {
 
   // Examples: {3,8} {0,5} {,5} {7,}
@@ -955,6 +955,12 @@ YY_RULE_SETUP
     yyterminate();
   }
 
+  if (hi_bound == 0 && lo_bound == 0)
+  {
+    yyerror(yyscanner, lex_env, "bad repeat interval");
+    yyterminate();
+  }
+
   yylval->range = (hi_bound << 16) | lo_bound;
 
   return _RANGE_;
@@ -962,7 +968,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 2:
 YY_RULE_SETUP
-#line 122 "re_lexer.l"
+#line 141 "re_lexer.l"
 {
 
   // Example: {10}
@@ -975,6 +981,12 @@ YY_RULE_SETUP
     yyterminate();
   }
 
+  if (value == 0)
+  {
+    yyerror(yyscanner, lex_env, "bad repeat interval");
+    yyterminate();
+  }
+
   yylval->range = (value << 16) | value;
 
   return _RANGE_;
@@ -982,7 +994,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 3:
 YY_RULE_SETUP
-#line 140 "re_lexer.l"
+#line 165 "re_lexer.l"
 {
 
   // Start of a negated character class. Example: [^abcd]
@@ -994,7 +1006,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 4:
 YY_RULE_SETUP
-#line 149 "re_lexer.l"
+#line 174 "re_lexer.l"
 {
 
   // Start of character negated class containing a ].
@@ -1009,7 +1021,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 5:
 YY_RULE_SETUP
-#line 162 "re_lexer.l"
+#line 187 "re_lexer.l"
 {
 
   // Start of character class containing a ].
@@ -1024,7 +1036,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 6:
 YY_RULE_SETUP
-#line 175 "re_lexer.l"
+#line 200 "re_lexer.l"
 {
 
   // Start of character class. Example: [abcd]
@@ -1037,7 +1049,7 @@ YY_RULE_SETUP
 case 7:
 /* rule 7 can match eol */
 YY_RULE_SETUP
-#line 185 "re_lexer.l"
+#line 210 "re_lexer.l"
 {
 
   // Any non-special character is passed as a CHAR token to the scanner.
@@ -1048,63 +1060,63 @@ YY_RULE_SETUP
 	YY_BREAK
 case 8:
 YY_RULE_SETUP
-#line 194 "re_lexer.l"
+#line 219 "re_lexer.l"
 {
   return _WORD_CHAR_;
 }
 	YY_BREAK
 case 9:
 YY_RULE_SETUP
-#line 199 "re_lexer.l"
+#line 224 "re_lexer.l"
 {
   return _NON_WORD_CHAR_;
 }
 	YY_BREAK
 case 10:
 YY_RULE_SETUP
-#line 204 "re_lexer.l"
+#line 229 "re_lexer.l"
 {
   return _SPACE_;
 }
 	YY_BREAK
 case 11:
 YY_RULE_SETUP
-#line 209 "re_lexer.l"
+#line 234 "re_lexer.l"
 {
   return _NON_SPACE_;
 }
 	YY_BREAK
 case 12:
 YY_RULE_SETUP
-#line 214 "re_lexer.l"
+#line 239 "re_lexer.l"
 {
   return _DIGIT_;
 }
 	YY_BREAK
 case 13:
 YY_RULE_SETUP
-#line 219 "re_lexer.l"
+#line 244 "re_lexer.l"
 {
   return _NON_DIGIT_;
 }
 	YY_BREAK
 case 14:
 YY_RULE_SETUP
-#line 224 "re_lexer.l"
+#line 249 "re_lexer.l"
 {
   return _WORD_BOUNDARY_;
 }
 	YY_BREAK
 case 15:
 YY_RULE_SETUP
-#line 228 "re_lexer.l"
+#line 253 "re_lexer.l"
 {
   return _NON_WORD_BOUNDARY_;
 }
 	YY_BREAK
 case 16:
 YY_RULE_SETUP
-#line 233 "re_lexer.l"
+#line 258 "re_lexer.l"
 {
 
   yyerror(yyscanner, lex_env, "backreferences are not allowed");
@@ -1113,7 +1125,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 17:
 YY_RULE_SETUP
-#line 240 "re_lexer.l"
+#line 265 "re_lexer.l"
 {
 
   uint8_t c;
@@ -1125,14 +1137,14 @@ YY_RULE_SETUP
   }
   else
   {
-    yyerror(yyscanner, lex_env, "unexpected end of buffer");
+    yyerror(yyscanner, lex_env, "illegal escape sequence");
     yyterminate();
   }
 }
 	YY_BREAK
 case 18:
 YY_RULE_SETUP
-#line 257 "re_lexer.l"
+#line 282 "re_lexer.l"
 {
 
   // End of character class.
@@ -1155,7 +1167,7 @@ YY_RULE_SETUP
 case 19:
 /* rule 19 can match eol */
 YY_RULE_SETUP
-#line 278 "re_lexer.l"
+#line 303 "re_lexer.l"
 {
 
   // A range inside a character class.
@@ -1180,7 +1192,7 @@ YY_RULE_SETUP
   {
     if (!read_escaped_char(yyscanner, &end))
     {
-      yyerror(yyscanner, lex_env, "unexpected end of buffer");
+      yyerror(yyscanner, lex_env, "illegal escape sequence");
       yyterminate();
     }
   }
@@ -1199,7 +1211,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 20:
 YY_RULE_SETUP
-#line 320 "re_lexer.l"
+#line 345 "re_lexer.l"
 {
 
   int i;
@@ -1210,7 +1222,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 21:
 YY_RULE_SETUP
-#line 329 "re_lexer.l"
+#line 354 "re_lexer.l"
 {
 
   int i;
@@ -1221,7 +1233,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 22:
 YY_RULE_SETUP
-#line 338 "re_lexer.l"
+#line 363 "re_lexer.l"
 {
 
   LEX_ENV->class_vector[' ' / 8] |= 1 << ' ' % 8;
@@ -1230,7 +1242,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 23:
 YY_RULE_SETUP
-#line 345 "re_lexer.l"
+#line 370 "re_lexer.l"
 {
 
   int i;
@@ -1248,7 +1260,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 24:
 YY_RULE_SETUP
-#line 361 "re_lexer.l"
+#line 386 "re_lexer.l"
 {
 
   char c;
@@ -1259,7 +1271,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 25:
 YY_RULE_SETUP
-#line 370 "re_lexer.l"
+#line 395 "re_lexer.l"
 {
 
   int i;
@@ -1270,7 +1282,7 @@ YY_RULE_SETUP
     if (i == 6)
       continue;
 
-    // digits 8 and 9 are the lowest two bits in the senventh byte of the
+    // digits 8 and 9 are the lowest two bits in the seventh byte of the
     // vector, let those bits alone.
     if (i == 7)
       LEX_ENV->class_vector[i] |= 0xFC;
@@ -1281,7 +1293,7 @@ YY_RULE_SETUP
 	YY_BREAK
 case 26:
 YY_RULE_SETUP
-#line 390 "re_lexer.l"
+#line 415 "re_lexer.l"
 {
 
   uint8_t c;
@@ -1292,14 +1304,14 @@ YY_RULE_SETUP
   }
   else
   {
-    yyerror(yyscanner, lex_env, "unexpected end of buffer");
+    yyerror(yyscanner, lex_env, "illegal escape sequence");
     yyterminate();
   }
 }
 	YY_BREAK
 case 27:
 YY_RULE_SETUP
-#line 406 "re_lexer.l"
+#line 431 "re_lexer.l"
 {
 
   if (yytext[0] >= 32 && yytext[0] < 127)
@@ -1317,7 +1329,7 @@ YY_RULE_SETUP
 }
 	YY_BREAK
 case YY_STATE_EOF(char_class):
-#line 423 "re_lexer.l"
+#line 448 "re_lexer.l"
 {
 
   // End of regexp reached while scanning a character class.
@@ -1328,7 +1340,7 @@ case YY_STATE_EOF(char_class):
 	YY_BREAK
 case 28:
 YY_RULE_SETUP
-#line 432 "re_lexer.l"
+#line 457 "re_lexer.l"
 {
 
   if (yytext[0] >= 32 && yytext[0] < 127)
@@ -1343,7 +1355,7 @@ YY_RULE_SETUP
 }
 	YY_BREAK
 case YY_STATE_EOF(INITIAL):
-#line 446 "re_lexer.l"
+#line 471 "re_lexer.l"
 {
 
   yyterminate();
@@ -1351,10 +1363,10 @@ case YY_STATE_EOF(INITIAL):
 	YY_BREAK
 case 29:
 YY_RULE_SETUP
-#line 451 "re_lexer.l"
+#line 476 "re_lexer.l"
 ECHO;
 	YY_BREAK
-#line 1345 "re_lexer.c"
+#line 1370 "re_lexer.c"
 
 	case YY_END_OF_BUFFER:
 		{
@@ -2503,7 +2515,7 @@ void re_yyfree (void * ptr , yyscan_t yyscanner)
 
 #define YYTABLES_NAME "yytables"
 
-#line 451 "re_lexer.l"
+#line 476 "re_lexer.l"
 
 
 
@@ -2563,24 +2575,24 @@ int read_escaped_char(
     yyscan_t yyscanner,
     uint8_t* escaped_char)
 {
-  char text[4];
+  char text[4] = {0, 0, 0, 0};
 
   text[0] = '\\';
   text[1] = RE_YY_INPUT(yyscanner);
 
-  if (text[1] == EOF)
+  if (text[1] == EOF || text[1] == 0)
     return 0;
 
   if (text[1] == 'x')
   {
     text[2] = RE_YY_INPUT(yyscanner);
 
-    if (text[2] == EOF)
+    if (!isxdigit(text[2]))
       return 0;
 
     text[3] = RE_YY_INPUT(yyscanner);
 
-    if (text[3] == EOF)
+    if (!isxdigit(text[3]))
       return 0;
   }
 
@@ -2590,15 +2602,12 @@ int read_escaped_char(
 }
 
 
-extern YR_THREAD_STORAGE_KEY recovery_state_key;
-
-
 void yyfatal(
     yyscan_t yyscanner,
     const char *error_message)
 {
   jmp_buf* recovery_state = (jmp_buf*) yr_thread_storage_get_value(
-      &recovery_state_key);
+      &yr_recovery_state_key);
 
   longjmp(*recovery_state, 1);
 }
@@ -2628,8 +2637,7 @@ void yyerror(
 
 int yr_parse_re_string(
   const char* re_string,
-  int flags,
-  RE** re,
+  RE_AST** re_ast,
   RE_ERROR* error)
 {
   yyscan_t yyscanner;
@@ -2638,25 +2646,23 @@ int yr_parse_re_string(
 
   lex_env.last_error_code = ERROR_SUCCESS;
 
-  yr_thread_storage_set_value(&recovery_state_key, &recovery_state);
+  yr_thread_storage_set_value(&yr_recovery_state_key, &recovery_state);
 
   if (setjmp(recovery_state) != 0)
     return ERROR_INTERNAL_FATAL_ERROR;
 
-  FAIL_ON_ERROR(yr_re_create(re));
-
-  (*re)->flags = flags;
+  FAIL_ON_ERROR(yr_re_ast_create(re_ast));
 
   re_yylex_init(&yyscanner);
-  re_yyset_extra(*re,yyscanner);
+  re_yyset_extra(*re_ast,yyscanner);
   re_yy_scan_string(re_string,yyscanner);
   yyparse(yyscanner, &lex_env);
   re_yylex_destroy(yyscanner);
 
   if (lex_env.last_error_code != ERROR_SUCCESS)
   {
-    yr_re_destroy(*re);
-    *re = NULL;
+    yr_re_ast_destroy(*re_ast);
+    *re_ast = NULL;
 
     strlcpy(
         error->message,

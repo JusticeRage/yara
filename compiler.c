@@ -51,13 +51,13 @@ YR_API int yr_compiler_create(
   new_compiler = (YR_COMPILER*) yr_calloc(1, sizeof(YR_COMPILER));
 
   if (new_compiler == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   new_compiler->errors = 0;
   new_compiler->callback = NULL;
   new_compiler->last_error = ERROR_SUCCESS;
   new_compiler->last_error_line = 0;
-  new_compiler->error_line = 0;
+  new_compiler->current_line = 0;
   new_compiler->last_result = ERROR_SUCCESS;
   new_compiler->file_stack_ptr = 0;
   new_compiler->file_name_stack_ptr = 0;
@@ -141,7 +141,7 @@ YR_API void yr_compiler_destroy(
   yr_arena_destroy(compiler->automaton_arena);
   yr_arena_destroy(compiler->matches_arena);
 
-    yr_ac_automaton_destroy(compiler->automaton);
+  yr_ac_automaton_destroy(compiler->automaton);
 
   yr_hash_table_destroy(
       compiler->rules_table,
@@ -234,7 +234,7 @@ int _yr_compiler_push_file_name(
     str = yr_strdup(file_name);
 
     if (str == NULL)
-      return ERROR_INSUFICIENT_MEMORY;
+      return ERROR_INSUFFICIENT_MEMORY;
 
     compiler->file_name_stack[compiler->file_name_stack_ptr] = str;
     compiler->file_name_stack_ptr++;
@@ -362,6 +362,37 @@ YR_API int yr_compiler_add_file(
     return compiler->errors;
   }
 
+}
+
+
+YR_API int yr_compiler_add_fd(
+    YR_COMPILER* compiler,
+    YR_FILE_DESCRIPTOR rules_fd,
+    const char* namespace_,
+    const char* file_name)
+{
+  // Don't allow yr_compiler_add_fd() after
+  // yr_compiler_get_rules() has been called.
+
+  assert(compiler->compiled_rules_arena == NULL);
+
+  if (file_name != NULL)
+    _yr_compiler_push_file_name(compiler, file_name);
+
+  if (namespace_ != NULL)
+    compiler->last_result = _yr_compiler_set_namespace(compiler, namespace_);
+  else
+    compiler->last_result = _yr_compiler_set_namespace(compiler, "default");
+
+  if (compiler->last_result == ERROR_SUCCESS)
+  {
+    return yr_lex_parse_rules_fd(rules_fd, compiler);
+  }
+  else
+  {
+    compiler->errors++;
+    return compiler->errors;
+  }
 }
 
 
@@ -576,7 +607,7 @@ YR_API int yr_compiler_get_rules(
   yara_rules = (YR_RULES*) yr_malloc(sizeof(YR_RULES));
 
   if (yara_rules == NULL)
-    return ERROR_INSUFICIENT_MEMORY;
+    return ERROR_INSUFFICIENT_MEMORY;
 
   FAIL_ON_ERROR_WITH_CLEANUP(
       yr_arena_duplicate(compiler->compiled_rules_arena, &yara_rules->arena),
@@ -590,7 +621,7 @@ YR_API int yr_compiler_get_rules(
   yara_rules->match_table = rules_file_header->match_table;
   yara_rules->transition_table = rules_file_header->transition_table;
   yara_rules->code_start = rules_file_header->code_start;
-  yara_rules->tidx_mask = 0;
+  memset(yara_rules->tidx_mask, 0, sizeof(yara_rules->tidx_mask));
 
   FAIL_ON_ERROR_WITH_CLEANUP(
       yr_mutex_create(&yara_rules->mutex),
@@ -786,7 +817,7 @@ YR_API char* yr_compiler_get_error_message(
 {
   switch(compiler->last_error)
   {
-    case ERROR_INSUFICIENT_MEMORY:
+    case ERROR_INSUFFICIENT_MEMORY:
       snprintf(buffer, buffer_size, "not enough memory");
       break;
     case ERROR_DUPLICATED_IDENTIFIER:
@@ -914,6 +945,13 @@ YR_API char* yr_compiler_get_error_message(
           "unknown module \"%s\"",
           compiler->last_error_extra_info);
       break;
+    case ERROR_INVALID_MODULE_NAME:
+      snprintf(
+          buffer,
+          buffer_size,
+          "invalid module name \"%s\"",
+          compiler->last_error_extra_info);
+      break;
     case ERROR_DUPLICATED_STRUCTURE_MEMBER:
       snprintf(buffer,
           buffer_size,
@@ -959,6 +997,11 @@ YR_API char* yr_compiler_get_error_message(
           buffer_size,
           "regular expression is too large");
       break;
+    case ERROR_REGULAR_EXPRESSION_TOO_COMPLEX:
+      snprintf(
+          buffer,
+          buffer_size,
+          "regular expression is too complex");
 
   }
 
