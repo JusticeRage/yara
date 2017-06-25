@@ -309,6 +309,7 @@ int get_match_data(int message, void* message_data, void* data)
 			return CALLBACK_CONTINUE; // Don't stop on the first matching rule.
 
 		case CALLBACK_MSG_RULE_NOT_MATCHING:
+		case CALLBACK_MSG_MODULE_IMPORTED:
 			return CALLBACK_CONTINUE;
 
 		// Detect when the ManaPE module is loaded
