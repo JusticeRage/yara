@@ -23,7 +23,7 @@ namespace yara {
  * Generate these with the following command when they are updated:
  *  cat error.h | perl -ne '/#define ([^ ]+)[ \t]*([0-9]+)/ && print "(" . $2 . ",\t\"" . $1 . "\")\n"'
  */
-const error_dict YARA_ERRORS = 
+const error_dict YARA_ERRORS =
 	boost::assign::map_list_of	(1,		"ERROR_INSUFICIENT_MEMORY")
 								(2,		"ERROR_COULD_NOT_ATTACH_TO_PROCESS")
 								(3,		"ERROR_COULD_NOT_OPEN_FILE")
@@ -67,14 +67,19 @@ const error_dict YARA_ERRORS =
 								(42,	"ERROR_DUPLICATED_STRUCTURE_MEMBER")
 								(43,	"ERROR_EMPTY_STRING")
 								(44,	"ERROR_DIVISION_BY_ZERO")
-								(45,	"ERROR_REGULAR_EXPRESSION_TOO_LARGE");
+								(45,	"ERROR_REGULAR_EXPRESSION_TOO_LARGE")
+								(46,	"ERROR_TOO_MANY_RE_FIBERS")
+								(47,    "ERROR_COULD_NOT_READ_PROCESS_MEMORY")
+								(48, 	"ERROR_INVALID_EXTERNAL_VARIABLE_TYPE")
+								(49, 	"ERROR_REGULAR_EXPRESSION_TOO_COMPLEX")
+								(50, 	"ERROR_INVALID_MODULE_NAME");
 
 std::string translate_error(int error_code)
 {
 	if (YARA_ERRORS.find(error_code) != YARA_ERRORS.end()) {
 		return YARA_ERRORS.at(error_code);
 	}
-	else 
+	else
 	{
 		std::stringstream ss;
 		ss << "Yara Error 0x" << std::hex << error_code;
