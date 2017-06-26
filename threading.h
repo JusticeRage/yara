@@ -35,6 +35,8 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 
+#include <Windows.h>
+
 typedef HANDLE SEMAPHORE;
 typedef CRITICAL_SECTION MUTEX;
 typedef HANDLE THREAD;
