@@ -19,6 +19,7 @@
 #define _YARA_WRAPPER_H_
 
 #include <iostream>
+#include <iomanip>
 #include <string>
 #include <sstream>
 #include <list>

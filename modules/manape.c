@@ -39,6 +39,10 @@ begin_struct("version_info")
 	declare_integer("start");
 	declare_integer("size");
 end_struct("version_info")
+begin_struct("authenticode")
+	declare_integer("start");
+	declare_integer("size");
+end_struct("authenticode")
 
 end_declarations;
 
@@ -75,6 +79,8 @@ int module_load(
 	}
 	set_integer(pe_info->version_info.start, module_object, "version_info.start");
 	set_integer(pe_info->version_info.size, module_object, "version_info.size");
+	set_integer(pe_info->authenticode.start, module_object, "authenticode.start");
+	set_integer(pe_info->authenticode.size, module_object, "authenticode.size");
 	return ERROR_SUCCESS;
 }
 

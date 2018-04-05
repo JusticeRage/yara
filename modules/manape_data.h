@@ -35,4 +35,5 @@ typedef struct manape_data_t {
 	manape_file_portion*	sections;
 	uint32_t				number_of_sections;
 	manape_file_portion		version_info;
+	manape_file_portion		authenticode;
 } manape_data;

@@ -165,7 +165,7 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 	pcallback_data cb_data(new callback_data);
 	cb_data->yara_matches = boost::make_shared<match_vector>();
 	int retval;
-	if (_rules == nullptr || bytes.size() == 0)
+	if (_rules == nullptr || bytes.empty())
 	{
 		if (_rules == nullptr) {
 			PRINT_ERROR << "No Yara rules loaded!" << std::endl;
@@ -292,7 +292,7 @@ int get_match_data(int message, void* message_data, void* data)
 							std::stringstream ss;
 							ss << std::hex;
 							for (int i = 0; i < std::min(20, match->data_length); i++) {
-								ss << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
+								ss << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
 							}
 							if (match->data_length > 20) {
 								ss << "...";
