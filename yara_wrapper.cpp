@@ -20,6 +20,8 @@
 namespace yara
 {
 
+namespace bfs = boost::filesystem;
+
 int Yara::_instance_count = 0;
 
 Yara::Yara()
@@ -98,15 +100,25 @@ bool Yara::load_rules(const std::string& rule_filename)
 	int retval;
 
 	// Look for a compiled version of the rule file first.
-	if (boost::filesystem::exists(rule_filename + "c")) { // File extension is .yarac instead of .yara.
-		retval = yr_rules_load((rule_filename + "c").c_str(), &_rules);
+	if (bfs::exists(rule_filename + "c")) // File extension is .yarac instead of .yara.
+	{
+		// If the compiled rules are older than their source, recompile them.
+		if (bfs::exists(rule_filename) && bfs::last_write_time(rule_filename) > bfs::last_write_time(rule_filename + "c"))
+		{
+			PRINT_WARNING << "New version of " << rule_filename << " detected. The rules will be recompiled." << std::endl;
+			boost::filesystem::remove(rule_filename + "c");
+			retval = ERROR_INVALID_FILE;
+		}
+		else {
+			retval = yr_rules_load((rule_filename + "c").c_str(), &_rules);
+		}
 	}
 	else {
 		retval = yr_rules_load(rule_filename.c_str(), &_rules);
 	}
 
 	// Yara rules compiled with a previous Yara version. Delete and recompile.
-	if (retval == ERROR_UNSUPPORTED_FILE_VERSION) {
+	if (retval == ERROR_UNSUPPORTED_FILE_VERSION && bfs::exists(rule_filename + "c")) {
 		boost::filesystem::remove(rule_filename + "c");
 	}
 
@@ -141,8 +153,6 @@ bool Yara::load_rules(const std::string& rule_filename)
 		}
 
 		// Save the compiled rules to improve load times.
-		// /!\ The compiled rules will have to be deleted if the original (readable) rule file is updated!
-		// TODO: Compare timestamps and recompile automatically.
 		retval = yr_rules_save(_rules, (rule_filename + "c").c_str());
 		if (retval != ERROR_SUCCESS) {
 			goto END;
