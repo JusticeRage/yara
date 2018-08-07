@@ -38,10 +38,10 @@ The original idea and inspiration for this module comes from Armin Buescher.
 
 #define MODULE_NAME magic
 
-magic_t magic_cookie[MAX_THREADS];
+magic_t magic_cookie[YR_MAX_THREADS];
 
-const char* cached_types[MAX_THREADS];
-const char* cached_mime_types[MAX_THREADS];
+const char* cached_types[YR_MAX_THREADS];
+const char* cached_mime_types[YR_MAX_THREADS];
 
 
 define_function(magic_mime_type)
@@ -49,7 +49,7 @@ define_function(magic_mime_type)
   YR_MEMORY_BLOCK* block;
   YR_SCAN_CONTEXT* context = scan_context();
 
-  uint8_t* block_data;
+  const uint8_t* block_data;
 
   if (context->flags & SCAN_FLAGS_PROCESS_MEMORY)
     return_string(UNDEFINED);
@@ -82,7 +82,7 @@ define_function(magic_type)
   YR_MEMORY_BLOCK* block;
   YR_SCAN_CONTEXT* context = scan_context();
 
-  uint8_t* block_data;
+  const uint8_t* block_data;
 
   if (context->flags & SCAN_FLAGS_PROCESS_MEMORY)
     return_string(UNDEFINED);
@@ -122,7 +122,7 @@ int module_initialize(
 {
   int i;
 
-  for (i = 0; i < MAX_THREADS; i++)
+  for (i = 0; i < YR_MAX_THREADS; i++)
     magic_cookie[i] = NULL;
 
   return ERROR_SUCCESS;
@@ -134,7 +134,7 @@ int module_finalize(
 {
   int i;
 
-  for (i = 0; i < MAX_THREADS; i++)
+  for (i = 0; i < YR_MAX_THREADS; i++)
     if (magic_cookie[i] != NULL)
       magic_close(magic_cookie[i]);
 

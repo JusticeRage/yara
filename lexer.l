@@ -47,13 +47,19 @@ with noyywrap then we can remove this pragma.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <setjmp.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
+#endif
+
+#if defined(_WIN32)
+#define strtoll _strtoi64
 #endif
 
 #include <yara/integers.h>
@@ -61,22 +67,35 @@ with noyywrap then we can remove this pragma.
 #include <yara/sizedstr.h>
 #include <yara/error.h>
 #include <yara/mem.h>
+#include <yara/utils.h>
 #include <yara/strutils.h>
 
 #include "grammar.h"
 
+#define error(error_code) \
+    { \
+      compiler->last_error = error_code; \
+      yyerror(yyscanner, compiler, NULL); \
+      yyterminate(); \
+    }
 
-#define LEX_CHECK_SPACE_OK(data, current_size, max_length) \
+#define syntax_error(error_msg) \
+    { \
+      yr_compiler_set_error_extra_info(compiler, error_msg); \
+      error(ERROR_SYNTAX_ERROR); \
+    }
+
+#define lex_check_space_ok(data, current_size, max_length) \
     if (strlen(data) + current_size >= max_length - 1) \
     { \
       yyerror(yyscanner, compiler, "out of space in lex_buf"); \
       yyterminate(); \
     }
 
-#define YYTEXT_TO_BUFFER \
+#define yytext_to_buffer \
     { \
       char *yptr = yytext; \
-      LEX_CHECK_SPACE_OK(yptr, yyextra->lex_buf_len, LEX_BUF_SIZE); \
+      lex_check_space_ok(yptr, yyextra->lex_buf_len, YR_LEX_BUF_SIZE); \
       while(*yptr) \
       { \
         *yyextra->lex_buf_ptr++ = *yptr++; \
@@ -84,7 +103,7 @@ with noyywrap then we can remove this pragma.
       } \
     }
 
-#define ALLOC_SIZED_STRING(str, str_len) \
+#define alloc_sized_string(str, str_len) \
   SIZED_STRING* str = (SIZED_STRING*) yr_malloc( \
       str_len + sizeof(SIZED_STRING)); \
   if (str == NULL) \
@@ -101,6 +120,20 @@ with noyywrap then we can remove this pragma.
 #ifdef _WIN32
 #define snprintf _snprintf
 #endif
+
+static bool is_absolute_path(
+    char* path)
+{
+  if (path == NULL)
+    return false;
+
+  #if defined(_WIN32) || defined(__CYGWIN__)
+  return strlen(path) > 2 &&
+      path[1] == ':' && (path[2] == '/' || path[2] == '\\');
+  #else
+  return strlen(path) > 0 && path[0] == '/';
+  #endif
+}
 
 %}
 
@@ -145,6 +178,7 @@ octdigit      [0-7]
 "strings"               { return _STRINGS_;     }
 "ascii"                 { return _ASCII_;       }
 "wide"                  { return _WIDE_;        }
+"xor"                   { return _XOR_;         }
 "fullword"              { return _FULLWORD_;    }
 "nocase"                { return _NOCASE_;      }
 "condition"             { return _CONDITION_;   }
@@ -182,85 +216,73 @@ include[ \t]+\"         {
                         }
 
 
-<include>[^\"]+         { YYTEXT_TO_BUFFER; }
+<include>[^\"]+         { yytext_to_buffer; }
 
 
 <include>\"             {
 
-  char            buffer[1024];
-  char            *current_file_name;
-  char            *s = NULL;
-  #ifdef _WIN32
-  char            *b = NULL;
-  #endif
-  char            *f;
-  FILE*           fh;
-
-  if (compiler->allow_includes)
+  if (compiler->include_callback != NULL)
   {
+    #ifdef _MSC_VER
+    char* b = NULL;
+    #endif
+    char* s = NULL;
+    char* f;
+
+    char buffer[1024];
+    const char* included_rules;
+    char* current_file_name;
+    char* include_path;
+
     *yyextra->lex_buf_ptr = '\0'; // null-terminate included file path
 
-    // move path of current source file into buffer
     current_file_name = yr_compiler_get_current_file_name(compiler);
 
-    if (current_file_name != NULL)
+    if (current_file_name == NULL ||
+        compiler->include_callback != _yr_compiler_default_include_callback ||
+        is_absolute_path(yyextra->lex_buf))
+    {
+      include_path = yyextra->lex_buf;
+    }
+    else
     {
       strlcpy(buffer, current_file_name, sizeof(buffer));
-    }
-    else
-    {
-      buffer[0] = '\0';
-    }
+      s = strrchr(buffer, '/');
 
-    // make included file path relative to current source file
-    s = strrchr(buffer, '/');
-
-    #ifdef _WIN32
-    b = strrchr(buffer, '\\'); // in Windows both path delimiters are accepted
-    #endif
-
-    #ifdef _WIN32
-    if (s != NULL || b != NULL)
-    #else
-    if (s != NULL)
-    #endif
-    {
-      #ifdef _WIN32
-      f = (b > s)? (b + 1): (s + 1);
-      #else
-      f = s + 1;
+      #ifdef _MSC_VER
+      b = strrchr(buffer, '\\'); // in Windows both path delimiters are accepted
       #endif
 
-      strlcpy(f, yyextra->lex_buf, sizeof(buffer) - (f - buffer));
-
-      f = buffer;
-
-      // SECURITY: Potential for directory traversal here.
-      fh = fopen(buffer, "r");
-
-      // if include file was not found relative to current source file,
-      // try to open it with path as specified by user (maybe user wrote
-      // a full path)
-
-      if (fh == NULL)
+      #ifdef _MSC_VER
+      if (s != NULL || b != NULL)
+      #else
+      if (s != NULL)
+      #endif
       {
-        f = yyextra->lex_buf;
+        #ifdef _MSC_VER
+        f = (b > s) ? (b + 1) : (s + 1);
+        #else
+        f = s + 1;
+        #endif
 
-        // SECURITY: Potential for directory traversal here.
-        fh = fopen(yyextra->lex_buf, "r");
+        strlcpy(f, yyextra->lex_buf, sizeof(buffer) - (f - buffer));
+        include_path = buffer;
+      }
+      else
+      {
+        include_path = yyextra->lex_buf;
       }
     }
-    else
-    {
-      f = yyextra->lex_buf;
 
-      // SECURITY: Potential for directory traversal here.
-      fh = fopen(yyextra->lex_buf, "r");
-    }
+    included_rules = compiler->include_callback(
+        include_path,
+        current_file_name,
+        compiler->current_namespace->name,
+        compiler->incl_clbk_user_data);
 
-    if (fh != NULL)
+    if (included_rules != NULL)
     {
-      int error_code = _yr_compiler_push_file_name(compiler, f);
+      int error_code = _yr_compiler_push_file_name(compiler, include_path);
 
       if (error_code != ERROR_SUCCESS)
       {
@@ -273,24 +295,51 @@ include[ \t]+\"         {
           yyerror(yyscanner, compiler, "includes depth exceeded");
         }
 
+        if (compiler->include_free != NULL)
+        {
+          compiler->include_free(included_rules, compiler->incl_clbk_user_data);
+        }
+
         yyterminate();
       }
 
-      _yr_compiler_push_file(compiler, fh);
-      yypush_buffer_state(
-          yy_create_buffer(fh, YY_BUF_SIZE, yyscanner), yyscanner);
+      // Workaround for flex issue: https://github.com/westes/flex/issues/58
+      yypush_buffer_state(YY_CURRENT_BUFFER, yyscanner);
+      yy_scan_string(included_rules, yyscanner);
+      yyset_lineno(1, yyscanner);
+
+      if (compiler->include_free != NULL)
+      {
+        compiler->include_free(included_rules, compiler->incl_clbk_user_data);
+      }
     }
     else
     {
-      snprintf(buffer, sizeof(buffer),
-               "can't open include file: %s", yyextra->lex_buf);
-      yyerror(yyscanner, compiler, buffer);
+      char* err_msg_fmt;
+      char err_msg[512];
+
+      if (compiler->include_callback == _yr_compiler_default_include_callback)
+      {
+        err_msg_fmt = "can't open include file: %s";
+      }
+      else
+      {
+        err_msg_fmt = "callback failed to provide include resource: %s";
+      }
+
+      snprintf(
+          err_msg,
+          sizeof(err_msg),
+          err_msg_fmt,
+          yyextra->lex_buf);
+
+      yyerror(yyscanner, compiler, err_msg);
     }
+
   }
   else // not allowing includes
   {
     yyerror(yyscanner, compiler, "includes are disabled");
-    yyterminate();
   }
 
   BEGIN(INITIAL);
@@ -300,12 +349,6 @@ include[ \t]+\"         {
 <<EOF>> {
 
   YR_COMPILER* compiler = yyget_extra(yyscanner);
-  FILE* file = _yr_compiler_pop_file(compiler);
-
-  if (file != NULL)
-  {
-    fclose(file);
-  }
 
   _yr_compiler_pop_file_name(compiler);
   yypop_buffer_state(yyscanner);
@@ -322,10 +365,7 @@ $({letter}|{digit}|_)*"*"  {
   yylval->c_string = yr_strdup(yytext);
 
   if (yylval->c_string == NULL)
-  {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
-  }
+    error(ERROR_INSUFFICIENT_MEMORY);
 
   return _STRING_IDENTIFIER_WITH_WILDCARD_;
 }
@@ -336,10 +376,7 @@ $({letter}|{digit}|_)*  {
   yylval->c_string = yr_strdup(yytext);
 
   if (yylval->c_string == NULL)
-  {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
-  }
+    error(ERROR_INSUFFICIENT_MEMORY);
 
   return _STRING_IDENTIFIER_;
 }
@@ -351,11 +388,13 @@ $({letter}|{digit}|_)*  {
 
   if (yylval->c_string == NULL)
   {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
+    error(ERROR_INSUFFICIENT_MEMORY);
+  }
+  else
+  {
+    yylval->c_string[0] = '$'; /* replace # by $*/
   }
 
-  yylval->c_string[0] = '$'; /* replace # by $*/
   return _STRING_COUNT_;
 }
 
@@ -366,11 +405,13 @@ $({letter}|{digit}|_)*  {
 
   if (yylval->c_string == NULL)
   {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
+    error(ERROR_INSUFFICIENT_MEMORY);
+  }
+  else
+  {
+    yylval->c_string[0] = '$'; /* replace @ by $*/
   }
 
-  yylval->c_string[0] = '$'; /* replace @ by $*/
   return _STRING_OFFSET_;
 }
 
@@ -381,11 +422,13 @@ $({letter}|{digit}|_)*  {
 
   if (yylval->c_string == NULL)
   {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
+    error(ERROR_INSUFFICIENT_MEMORY);
+  }
+  else
+  {
+    yylval->c_string[0] = '$'; /* replace ! by $*/
   }
 
-  yylval->c_string[0] = '$'; /* replace ! by $*/
   return _STRING_LENGTH_;
 }
 
@@ -432,17 +475,12 @@ u?int(8|16|32)(be)? {
 ({letter}|_)({letter}|{digit}|_)*  {
 
   if (strlen(yytext) > 128)
-  {
-    yyerror(yyscanner, compiler, "identifier too long");
-  }
+    syntax_error("identifier too long");
 
   yylval->c_string = yr_strdup(yytext);
 
   if (yylval->c_string == NULL)
-  {
-    yyerror(yyscanner, compiler, "not enough memory");
-    yyterminate();
-  }
+    error(ERROR_INSUFFICIENT_MEMORY);
 
   return _IDENTIFIER_;
 }
@@ -450,20 +488,41 @@ u?int(8|16|32)(be)? {
 
 {digit}+(MB|KB){0,1}  {
 
-  #ifdef _MSC_VER
-  yylval->integer = _atoi64(yytext);
-  #else
-  yylval->integer = atoll(yytext);
-  #endif
+  char *endptr;
 
-  if (strstr(yytext, "KB") != NULL)
+  errno = 0;
+  yylval->integer = strtoll(yytext, &endptr, 10);
+
+  if (yylval->integer == LLONG_MAX && errno == ERANGE)
   {
-     yylval->integer *= 1024;
+    yr_compiler_set_error_extra_info(compiler, yytext);
+    error(ERROR_INTEGER_OVERFLOW);
+  }
+  else if (strstr(yytext, "KB") != NULL)
+  {
+    if (yylval->integer > LLONG_MAX / 1024)
+    {
+      yr_compiler_set_error_extra_info(compiler, yytext);
+      error(ERROR_INTEGER_OVERFLOW);
+    }
+    else
+    {
+      yylval->integer *= 1024;
+    }
   }
   else if (strstr(yytext, "MB") != NULL)
   {
-     yylval->integer *= 1048576;
+    if (yylval->integer > LLONG_MAX / 1048576)
+    {
+      yr_compiler_set_error_extra_info(compiler, yytext);
+      error(ERROR_INTEGER_OVERFLOW);
+    }
+    else
+    {
+      yylval->integer *= 1048576;
+    }
   }
+
   return _NUMBER_;
 }
 
@@ -473,19 +532,41 @@ u?int(8|16|32)(be)? {
 }
 
 0x{hexdigit}+  {
-  yylval->integer = xtoi(yytext + 2);
+
+  char *endptr;
+
+  errno = 0;
+  yylval->integer = strtoll(yytext, &endptr, 16);
+
+  if (yylval->integer == LLONG_MAX && errno == ERANGE)
+  {
+    yr_compiler_set_error_extra_info(compiler, yytext);
+    error(ERROR_INTEGER_OVERFLOW);
+  }
+
   return _NUMBER_;
 }
 
 0o{octdigit}+  {
-  yylval->integer = otoi(yytext + 2);
+
+  char *endptr;
+
+  errno = 0;
+  yylval->integer = strtoll(yytext + 2, &endptr, 8);
+
+  if (yylval->integer == LLONG_MAX && errno == ERANGE)
+  {
+    yr_compiler_set_error_extra_info(compiler, yytext);
+    error(ERROR_INTEGER_OVERFLOW);
+  }
+
   return _NUMBER_;
 }
 
 
 <str>\"   {     /* saw closing quote - all done */
 
-  ALLOC_SIZED_STRING(s, yyextra->lex_buf_len);
+  alloc_sized_string(s, yyextra->lex_buf_len);
 
   *yyextra->lex_buf_ptr = '\0';
   memcpy(s->c_string, yyextra->lex_buf, yyextra->lex_buf_len + 1);
@@ -499,7 +580,7 @@ u?int(8|16|32)(be)? {
 
 <str>\\t   {
 
-  LEX_CHECK_SPACE_OK("\t", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("\t", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '\t';
   yyextra->lex_buf_len++;
 }
@@ -507,7 +588,7 @@ u?int(8|16|32)(be)? {
 
 <str>\\n   {
 
-  LEX_CHECK_SPACE_OK("\n", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("\n", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '\n';
   yyextra->lex_buf_len++;
 }
@@ -515,7 +596,7 @@ u?int(8|16|32)(be)? {
 
 <str>\\\"   {
 
-  LEX_CHECK_SPACE_OK("\"", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("\"", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '\"';
   yyextra->lex_buf_len++;
 }
@@ -523,7 +604,7 @@ u?int(8|16|32)(be)? {
 
 <str>\\\\   {
 
-  LEX_CHECK_SPACE_OK("\\", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("\\", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '\\';
   yyextra->lex_buf_len++;
 }
@@ -534,25 +615,22 @@ u?int(8|16|32)(be)? {
    int result;
 
    sscanf( yytext + 2, "%x", &result );
-   LEX_CHECK_SPACE_OK("X", yyextra->lex_buf_len, LEX_BUF_SIZE);
+   lex_check_space_ok("X", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
    *yyextra->lex_buf_ptr++ = result;
    yyextra->lex_buf_len++;
 }
 
 
-<str>[^\\\n\"]+   { YYTEXT_TO_BUFFER; }
+<str>[^\\\n\"]+   { yytext_to_buffer; }
 
 
 <str>\n  {
-
-  yyerror(yyscanner, compiler, "unterminated string");
-  yyterminate();
+  syntax_error("unterminated string");
 }
 
-<str>\\(.|\n) {
 
-  yyerror(yyscanner, compiler, "illegal escape sequence");
-  yyterminate();
+<str>\\(.|\n) {
+  syntax_error("illegal escape sequence");
 }
 
 
@@ -560,7 +638,7 @@ u?int(8|16|32)(be)? {
 
   if (yyextra->lex_buf_len > 0)
   {
-    ALLOC_SIZED_STRING(s, yyextra->lex_buf_len);
+    alloc_sized_string(s, yyextra->lex_buf_len);
 
     if (yytext[1] == 'i')
       s->flags |= SIZED_STRING_FLAGS_NO_CASE;
@@ -574,8 +652,7 @@ u?int(8|16|32)(be)? {
   }
   else
   {
-    yyerror(yyscanner, compiler, "empty regular expression");
-    yyterminate();
+    syntax_error("empty regular expression");
   }
 
   BEGIN(INITIAL);
@@ -585,7 +662,7 @@ u?int(8|16|32)(be)? {
 
 <regexp>\\\/  {
 
-  LEX_CHECK_SPACE_OK("/", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("/", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '/';
   yyextra->lex_buf_len++ ;
 }
@@ -593,13 +670,10 @@ u?int(8|16|32)(be)? {
 
 <regexp>\\. {
 
-  LEX_CHECK_SPACE_OK("\\.", yyextra->lex_buf_len, LEX_BUF_SIZE);
+  lex_check_space_ok("\\.", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
 
   if (yytext[1] == 0)
-  {
-    yyerror(yyscanner, compiler, "malformed regular expression");
-    yyterminate();
-  }
+    syntax_error("malformed regular expression");
 
   *yyextra->lex_buf_ptr++ = yytext[0];
   *yyextra->lex_buf_ptr++ = yytext[1];
@@ -607,18 +681,17 @@ u?int(8|16|32)(be)? {
 }
 
 
-<regexp>[^/\n\\]+ { YYTEXT_TO_BUFFER; }
+<regexp>[^/\n\\]+ { yytext_to_buffer; }
 
 
 <regexp>\n  {
-
-  yyerror(yyscanner, compiler, "unterminated regular expression");
-  yyterminate();
+  syntax_error("unterminated regular expression");
 }
 
 
 \"  {
 
+  yylval->sized_string = NULL;
   yyextra->lex_buf_ptr = yyextra->lex_buf;
   yyextra->lex_buf_len = 0;
   BEGIN(str);
@@ -627,6 +700,7 @@ u?int(8|16|32)(be)? {
 
 "/"  {
 
+  yylval->sized_string = NULL;
   yyextra->lex_buf_ptr = yyextra->lex_buf;
   yyextra->lex_buf_len = 0;
   BEGIN(regexp);
@@ -637,7 +711,7 @@ u?int(8|16|32)(be)? {
   // Match hex-digits with whitespace or comments. The latter are stripped
   // out by hex_lexer.l
 
-  ALLOC_SIZED_STRING(s, strlen(yytext));
+  alloc_sized_string(s, strlen(yytext));
 
   strlcpy(s->c_string, yytext, s->length + 1);
   yylval->sized_string = s;
@@ -656,8 +730,7 @@ u?int(8|16|32)(be)? {
   }
   else
   {
-    yyerror(yyscanner, compiler, "non-ascii character");
-    yyterminate();
+    syntax_error("non-ascii character");
   }
 }
 
@@ -720,7 +793,7 @@ void yyerror(
   /*
     if error_message != NULL the error comes from yyparse internal code
     else the error comes from my code and the error code is set in
-    compiler->last_result
+    compiler->last_error
   */
 
   compiler->errors++;
@@ -756,30 +829,23 @@ void yyerror(
           compiler->user_data);
     }
   }
-  else
+  else if (compiler->callback != NULL)
   {
-    compiler->last_error = compiler->last_result;
+    yr_compiler_get_error_message(compiler, message, sizeof(message));
 
-    if (compiler->callback != NULL)
-    {
-      yr_compiler_get_error_message(compiler, message, sizeof(message));
-
-      compiler->callback(
-        YARA_ERROR_LEVEL_ERROR,
-        file_name,
-        compiler->last_error_line,
-        message,
-        compiler->user_data);
-    }
+    compiler->callback(
+      YARA_ERROR_LEVEL_ERROR,
+      file_name,
+      compiler->last_error_line,
+      message,
+      compiler->user_data);
   }
-
-  compiler->last_result = ERROR_SUCCESS;
 }
 
 
 int yr_lex_parse_rules_string(
-  const char* rules_string,
-  YR_COMPILER* compiler)
+    const char* rules_string,
+    YR_COMPILER* compiler)
 {
   yyscan_t yyscanner;
 
@@ -805,8 +871,8 @@ int yr_lex_parse_rules_string(
 
 
 int yr_lex_parse_rules_file(
-  FILE* rules_file,
-  YR_COMPILER* compiler)
+    FILE* rules_file,
+    YR_COMPILER* compiler)
 {
   yyscan_t yyscanner;
 
@@ -831,16 +897,51 @@ int yr_lex_parse_rules_file(
 
 
 int yr_lex_parse_rules_fd(
-  YR_FILE_DESCRIPTOR rules_fd,
-  YR_COMPILER* compiler)
+    YR_FILE_DESCRIPTOR rules_fd,
+    YR_COMPILER* compiler)
 {
   yyscan_t yyscanner;
-  char buf[1024];
+  size_t file_size;
+  void* buffer;
 
   compiler->errors = 0;
 
   if (setjmp(compiler->error_recovery) != 0)
     return compiler->errors;
+
+  #if defined(_WIN32) || defined(__CYGWIN__)
+  file_size = (size_t) GetFileSize(rules_fd, NULL);
+  #else
+  struct stat fs;
+  if (fstat(rules_fd, &fs) != 0)
+  {
+    compiler->errors = 1;
+    compiler->last_error = ERROR_COULD_NOT_READ_FILE;
+    return compiler->errors;
+  }
+  file_size = (size_t) fs.st_size;
+  #endif
+
+  buffer = yr_malloc(file_size);
+
+  if (buffer == NULL)
+  {
+    compiler->errors = 1;
+    compiler->last_error = ERROR_INSUFFICIENT_MEMORY;
+    return compiler->errors;
+  }
+
+  #if defined(_WIN32) || defined(__CYGWIN__)
+  if (!ReadFile(rules_fd, buffer, file_size, NULL, NULL))
+  #else
+  if (read(rules_fd, buffer, file_size) != file_size)
+  #endif
+  {
+    yr_free(buffer);
+    compiler->errors = 1;
+    compiler->last_error = ERROR_COULD_NOT_READ_FILE;
+    return compiler->errors;
+  }
 
   yylex_init(&yyscanner);
 
@@ -849,29 +950,11 @@ int yr_lex_parse_rules_fd(
   #endif
 
   yyset_extra(compiler, yyscanner);
-  while (1)
-  {
-#if defined(_WIN32) || defined(__CYGWIN__)
-    DWORD len;
-    if (!ReadFile(rules_fd, buf, sizeof(buf), &len, NULL))
-      break;
-#else
-    ssize_t len = read(rules_fd, buf, sizeof(buf));
-    if (len < 0)
-    {
-      if (errno == EINTR)
-        continue;
-      else
-        break;
-    }
-#endif
-    if (len == 0)
-      break;
-    yy_scan_bytes(buf, len, yyscanner);
-  }
-
+  yy_scan_bytes((const char*) buffer, file_size, yyscanner);
   yyparse(yyscanner, compiler);
   yylex_destroy(yyscanner);
+
+  yr_free(buffer);
 
   return compiler->errors;
 }

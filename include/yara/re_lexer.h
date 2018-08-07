@@ -64,9 +64,8 @@ typedef void* yyscan_t;
 
 typedef struct _RE_LEX_ENVIRONMENT
 {
-  int negated_class;
-  uint8_t class_vector[32];
-  int last_error_code;
+  RE_CLASS re_class;
+  int last_error;
   char last_error_message[256];
 
 } RE_LEX_ENVIRONMENT;

@@ -40,6 +40,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <yara/error.h>
 #include <yara/exec.h>
 #include <yara/types.h>
+#include <yara/re.h>
 #include <yara/object.h>
 #include <yara/libyara.h>
 
@@ -342,11 +343,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
       assertf( \
           __function_obj->return_obj->type == OBJECT_TYPE_INTEGER, \
           "return type differs from function declaration"); \
-      yr_object_set_integer( \
+      return yr_object_set_integer( \
           (integer), \
           __function_obj->return_obj, \
           NULL); \
-      return ERROR_SUCCESS; \
     }
 
 
@@ -355,11 +355,10 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
       assertf( \
           __function_obj->return_obj->type == OBJECT_TYPE_FLOAT, \
           "return type differs from function declaration"); \
-      yr_object_set_float( \
+      return yr_object_set_float( \
           (d != (double) UNDEFINED) ? d : NAN, \
           __function_obj->return_obj, \
           NULL); \
-      return ERROR_SUCCESS; \
     }
 
 
@@ -368,24 +367,20 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
       assertf( \
           __function_obj->return_obj->type == OBJECT_TYPE_STRING, \
           "return type differs from function declaration"); \
-      yr_object_set_string( \
+      return yr_object_set_string( \
           (s != (char*) UNDEFINED) ? s : NULL, \
           (s != (char*) UNDEFINED) ? strlen(s) : 0, \
           __function_obj->return_obj, \
           NULL); \
-      return ERROR_SUCCESS; \
     }
 
 
-struct _YR_MODULE;
-
-
 typedef int (*YR_EXT_INITIALIZE_FUNC)(
-    struct _YR_MODULE* module);
+    YR_MODULE* module);
 
 
 typedef int (*YR_EXT_FINALIZE_FUNC)(
-    struct _YR_MODULE* module);
+    YR_MODULE* module);
 
 
 typedef int (*YR_EXT_DECLARATIONS_FUNC)(
@@ -403,7 +398,7 @@ typedef int (*YR_EXT_UNLOAD_FUNC)(
     YR_OBJECT* module_object);
 
 
-typedef struct _YR_MODULE
+struct YR_MODULE
 {
   char* name;
 
@@ -412,17 +407,15 @@ typedef struct _YR_MODULE
   YR_EXT_UNLOAD_FUNC unload;
   YR_EXT_INITIALIZE_FUNC initialize;
   YR_EXT_FINALIZE_FUNC finalize;
+};
 
-} YR_MODULE;
 
-
-typedef struct _YR_MODULE_IMPORT
+struct YR_MODULE_IMPORT
 {
   const char* module_name;
   void* module_data;
   size_t module_data_size;
-
-} YR_MODULE_IMPORT;
+};
 
 
 int yr_modules_initialize(void);

@@ -29,6 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <math.h>
 
+#include <yara/utils.h>
 #include <yara/modules.h>
 #include <yara/mem.h>
 
@@ -80,7 +81,7 @@ define_function(string_entropy)
 
 define_function(data_entropy)
 {
-  int past_first_block = FALSE;
+  bool past_first_block = false;
   double entropy = 0.0;
 
   size_t total_len = 0;
@@ -112,7 +113,7 @@ define_function(data_entropy)
       size_t data_len = (size_t) yr_min(
           length, (size_t) (block->size - data_offset));
 
-      uint8_t* block_data = block->fetch_data(block);
+      const uint8_t* block_data = block->fetch_data(block);
 
       if (block_data == NULL)
       {
@@ -130,7 +131,7 @@ define_function(data_entropy)
         data[c] += 1;
       }
 
-      past_first_block = TRUE;
+      past_first_block = true;
     }
     else if (past_first_block)
     {
@@ -186,7 +187,7 @@ define_function(string_deviation)
 
 define_function(data_deviation)
 {
-  int past_first_block = FALSE;
+  int past_first_block = false;
 
   int64_t offset = integer_argument(1);
   int64_t length = integer_argument(2);
@@ -199,7 +200,7 @@ define_function(data_deviation)
 
   size_t data_offset = 0;
   size_t data_len = 0;
-  uint8_t* block_data = NULL;
+  const uint8_t* block_data = NULL;
 
   YR_SCAN_CONTEXT* context = scan_context();
   YR_MEMORY_BLOCK* block = first_memory_block(context);
@@ -228,7 +229,7 @@ define_function(data_deviation)
       for (i = 0; i < data_len; i++)
         sum += fabs(((double)* (block_data + data_offset + i)) - mean);
 
-      past_first_block = TRUE;
+      past_first_block = true;
     }
     else if (past_first_block)
     {
@@ -267,7 +268,7 @@ define_function(string_mean)
 
 define_function(data_mean)
 {
-  int past_first_block = FALSE;
+  int past_first_block = false;
   double sum = 0.0;
 
   int64_t offset = integer_argument(1);
@@ -292,7 +293,7 @@ define_function(data_mean)
       size_t data_len = (size_t) yr_min(
           length, (size_t) (block->size - data_offset));
 
-      uint8_t* block_data = block->fetch_data(block);
+      const uint8_t* block_data = block->fetch_data(block);
 
       if (block_data == NULL)
         return_float(UNDEFINED);
@@ -304,7 +305,7 @@ define_function(data_mean)
       for (i = 0; i < data_len; i++)
         sum += (double)* (block_data + data_offset + i);
 
-      past_first_block = TRUE;
+      past_first_block = true;
     }
     else if (past_first_block)
     {
@@ -329,7 +330,7 @@ define_function(data_mean)
 
 define_function(data_serial_correlation)
 {
-  int past_first_block = FALSE;
+  int past_first_block = false;
 
   size_t total_len = 0;
   size_t i;
@@ -360,7 +361,7 @@ define_function(data_serial_correlation)
       size_t data_len = (size_t) yr_min(
           length, (size_t) (block->size - data_offset));
 
-      uint8_t* block_data = block->fetch_data(block);
+      const uint8_t* block_data = block->fetch_data(block);
 
       if (block_data == NULL)
         return_float(UNDEFINED);
@@ -378,7 +379,7 @@ define_function(data_serial_correlation)
         scclast = sccun;
       }
 
-      past_first_block = TRUE;
+      past_first_block = true;
     }
     else if (past_first_block)
     {
@@ -449,7 +450,7 @@ define_function(string_serial_correlation)
 
 define_function(data_monte_carlo_pi)
 {
-  int past_first_block = FALSE;
+  int past_first_block = false;
   int mcount = 0;
   int inmont = 0;
 
@@ -479,7 +480,7 @@ define_function(data_monte_carlo_pi)
       size_t data_len = (size_t) yr_min(
           length, (size_t) (block->size - data_offset));
 
-      uint8_t* block_data = block->fetch_data(block);
+      const uint8_t* block_data = block->fetch_data(block);
 
       if (block_data == NULL)
         return_float(UNDEFINED);
@@ -510,7 +511,7 @@ define_function(data_monte_carlo_pi)
         }
       }
 
-      past_first_block = TRUE;
+      past_first_block = true;
     }
     else if (past_first_block)
     {
@@ -591,6 +592,29 @@ define_function(in_range)
 }
 
 
+// Undefine existing "min" and "max" macros in order to avoid conflicts with
+// function names.
+#undef min
+#undef max
+
+define_function(min)
+{
+  uint64_t i = integer_argument(1);
+  uint64_t j = integer_argument(2);
+
+  return_integer(i < j ? i : j);
+}
+
+
+define_function(max)
+{
+  uint64_t i = integer_argument(1);
+  uint64_t j = integer_argument(2);
+
+  return_integer(i > j ? i : j);
+}
+
+
 begin_declarations;
 
   declare_float("MEAN_BYTES");
@@ -605,6 +629,8 @@ begin_declarations;
   declare_function("monte_carlo_pi", "s", "f", string_monte_carlo_pi);
   declare_function("entropy", "ii", "f", data_entropy);
   declare_function("entropy", "s", "f", string_entropy);
+  declare_function("min", "ii", "i", min);
+  declare_function("max", "ii", "i", max);
 
 end_declarations;
 

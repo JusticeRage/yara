@@ -47,6 +47,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <yara.h>
 
 #include "args.h"
+#include "common.h"
 
 
 #ifndef MAX_PATH
@@ -64,11 +65,13 @@ typedef struct COMPILER_RESULTS
 } COMPILER_RESULTS;
 
 
+static char* atom_quality_table;
 static char* ext_vars[MAX_ARGS_EXT_VAR + 1];
-static int ignore_warnings = FALSE;
-static int show_version = FALSE;
-static int show_help = FALSE;
-static int fail_on_warnings = FALSE;
+static bool ignore_warnings = false;
+static bool show_version = false;
+static bool show_help = false;
+static bool fail_on_warnings = false;
+static int max_strings_per_rule = DEFAULT_MAX_STRINGS_PER_RULE;
 
 
 #define USAGE_STRING \
@@ -76,40 +79,32 @@ static int fail_on_warnings = FALSE;
 
 args_option_t options[] =
 {
-  OPT_STRING_MULTI('d', NULL, &ext_vars, MAX_ARGS_EXT_VAR,
-      "define external variable", "VAR=VALUE"),
+  OPT_STRING(0, "atom-quality-table", &atom_quality_table,
+      "path to a file with the atom quality table", "FILE"),
 
-  OPT_BOOLEAN('w', "no-warnings", &ignore_warnings,
-      "disable warnings"),
+  OPT_STRING_MULTI('d', "define", &ext_vars, MAX_ARGS_EXT_VAR,
+      "define external variable", "VAR=VALUE"),
 
   OPT_BOOLEAN(0, "fail-on-warnings", &fail_on_warnings,
       "fail on warnings"),
 
-  OPT_BOOLEAN('v', "version", &show_version,
-      "show version information"),
-
   OPT_BOOLEAN('h', "help", &show_help,
       "show this help and exit"),
+
+  OPT_INTEGER(0, "max-strings-per-rule", &max_strings_per_rule,
+      "set maximum number of strings per rule (default=10000)", "NUMBER"),
+
+  OPT_BOOLEAN('w', "no-warnings", &ignore_warnings,
+      "disable warnings"),
+
+  OPT_BOOLEAN('v', "version", &show_version,
+      "show version information"),
 
   OPT_END()
 };
 
 
-int is_numeric(
-    const char *str)
-{
-  while(*str)
-  {
-    if (!isdigit(*str))
-      return 0;
-    str++;
-  }
-
-  return 1;
-}
-
-
-void report_error(
+static void report_error(
     int error_level,
     const char* file_name,
     int line_number,
@@ -130,7 +125,7 @@ void report_error(
 }
 
 
-int define_external_variables(
+static bool define_external_variables(
     YR_COMPILER* compiler)
 {
   for (int i = 0; ext_vars[i] != NULL; i++)
@@ -140,7 +135,7 @@ int define_external_variables(
     if (!equal_sign)
     {
       fprintf(stderr, "error: wrong syntax for `-d` option.\n");
-      return FALSE;
+      return false;
     }
 
     // Replace the equal sign with null character to split the external
@@ -152,7 +147,14 @@ int define_external_variables(
     char* identifier = ext_vars[i];
     char* value = equal_sign + 1;
 
-    if (is_numeric(value))
+    if (is_float(value))
+    {
+      yr_compiler_define_float_variable(
+          compiler,
+          identifier,
+          atof(value));
+    }
+    else if (is_integer(value))
     {
       yr_compiler_define_integer_variable(
           compiler,
@@ -175,11 +177,8 @@ int define_external_variables(
     }
   }
 
-  return TRUE;
+  return true;
 }
-
-
-#define exit_with_code(code) { result = code; goto _exit; }
 
 
 int main(
@@ -205,7 +204,7 @@ int main(
   {
     printf("%s\n\n", USAGE_STRING);
 
-    args_print_usage(options, 35);
+    args_print_usage(options, 40);
     printf("\nSend bug reports and suggestions to: vmalvarez@virustotal.com\n");
 
     return EXIT_SUCCESS;
@@ -231,49 +230,32 @@ int main(
   if (!define_external_variables(compiler))
     exit_with_code(EXIT_FAILURE);
 
+  if (atom_quality_table != NULL)
+  {
+    result = yr_compiler_load_atom_quality_table(
+        compiler, atom_quality_table, 0);
+
+    if (result != ERROR_SUCCESS)
+    {
+      fprintf(stderr, "error loading atom quality table\n");
+      exit_with_code(EXIT_FAILURE);
+    }
+  }
+
   cr.errors = 0;
   cr.warnings = 0;
 
+  yr_set_configuration(YR_CONFIG_MAX_STRINGS_PER_RULE, &max_strings_per_rule);
   yr_compiler_set_callback(compiler, report_error, &cr);
 
-  for (int i = 0; i < argc - 1; i++)
-  {
-    const char* ns;
-    const char* file_name;
-    char* colon = (char*) strchr(argv[i], ':');
+  if (!compile_files(compiler, argc, argv))
+    exit_with_code(EXIT_FAILURE);
 
-    if (colon)
-    {
-      file_name = colon + 1;
-      *colon = '\0';
-      ns = argv[i];
-    }
-    else
-    {
-      file_name = argv[i];
-      ns = NULL;
-    }
+  if (cr.errors > 0)
+    exit_with_code(EXIT_FAILURE);
 
-    FILE* rule_file = fopen(file_name, "r");
-
-    if (rule_file != NULL)
-    {
-      cr.errors = yr_compiler_add_file(
-          compiler, rule_file, ns, file_name);
-
-      fclose(rule_file);
-
-      if (cr.errors) // errors during compilation
-        exit_with_code(EXIT_FAILURE);
-
-      if (fail_on_warnings && cr.warnings > 0)
-        exit_with_code(EXIT_FAILURE);
-    }
-    else
-    {
-      fprintf(stderr, "error: could not open file: %s\n", file_name);
-    }
-  }
+  if (fail_on_warnings && cr.warnings > 0)
+    exit_with_code(EXIT_FAILURE);
 
   result = yr_compiler_get_rules(compiler, &rules);
 

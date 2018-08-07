@@ -20,3 +20,11 @@ MODULE(magic)
 #ifdef HASH_MODULE
 MODULE(hash)
 #endif
+
+#ifdef MACHO_MODULE
+MODULE(macho)
+#endif
+
+#ifdef DEX_MODULE
+MODULE(dex)
+#endif

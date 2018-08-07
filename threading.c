@@ -28,7 +28,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <yara/error.h>
-#include <yara/threading.h>
+#include <yara/include/yara/threading.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
 
@@ -125,85 +125,85 @@ void* yr_thread_storage_get_value(
 
 YR_THREAD_ID yr_current_thread_id(void)
 {
-  return pthread_self();
+    return pthread_self();
 }
 
 
 int yr_mutex_create(
-    YR_MUTEX* mutex)
+        YR_MUTEX* mutex)
 {
-  if (pthread_mutex_init(mutex, NULL) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_mutex_init(mutex, NULL) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_mutex_destroy(
-    YR_MUTEX* mutex)
+        YR_MUTEX* mutex)
 {
-  if (pthread_mutex_destroy(mutex) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_mutex_destroy(mutex) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_mutex_lock(
-    YR_MUTEX* mutex)
+        YR_MUTEX* mutex)
 {
-  if (pthread_mutex_lock(mutex) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_mutex_lock(mutex) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_mutex_unlock(
-    YR_MUTEX* mutex)
+        YR_MUTEX* mutex)
 {
-  if (pthread_mutex_unlock(mutex) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_mutex_unlock(mutex) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_thread_storage_create(
-    YR_THREAD_STORAGE_KEY* storage)
+        YR_THREAD_STORAGE_KEY* storage)
 {
-  if (pthread_key_create(storage, NULL) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_key_create(storage, NULL) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_thread_storage_destroy(
-    YR_THREAD_STORAGE_KEY* storage)
+        YR_THREAD_STORAGE_KEY* storage)
 {
-  if (pthread_key_delete(*storage) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_key_delete(*storage) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 int yr_thread_storage_set_value(
-    YR_THREAD_STORAGE_KEY* storage,
-    void* value)
+        YR_THREAD_STORAGE_KEY* storage,
+        void* value)
 {
-  if (pthread_setspecific(*storage, value) != 0)
-    return ERROR_INTERNAL_FATAL_ERROR;
+    if (pthread_setspecific(*storage, value) != 0)
+        return ERROR_INTERNAL_FATAL_ERROR;
 
-  return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
 }
 
 
 void* yr_thread_storage_get_value(
-    YR_THREAD_STORAGE_KEY* storage)
+        YR_THREAD_STORAGE_KEY* storage)
 {
-  return pthread_getspecific(*storage);
+    return pthread_getspecific(*storage);
 }
 
 #endif

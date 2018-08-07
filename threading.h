@@ -28,43 +28,65 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 
-#ifndef YR_MUTEX_H
-#define YR_MUTEX_H
-
-
+#ifndef THREADING_H
+#define THREADING_H
 
 #if defined(_WIN32) || defined(__CYGWIN__)
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#include <pthread.h>
+#include <semaphore.h>
+#endif
 
-#include <Windows.h>
+#if defined(_WIN32) || defined(__CYGWIN__)
 
 typedef HANDLE SEMAPHORE;
 typedef CRITICAL_SECTION MUTEX;
 typedef HANDLE THREAD;
 
-typedef DWORD YR_THREAD_ID;
-typedef DWORD YR_THREAD_STORAGE_KEY;
-typedef HANDLE YR_MUTEX;
+typedef LPTHREAD_START_ROUTINE THREAD_START_ROUTINE;
 
 #else
 
-#include <pthread.h>
-
-typedef pthread_t YR_THREAD_ID;
-typedef pthread_key_t YR_THREAD_STORAGE_KEY;
-typedef pthread_mutex_t YR_MUTEX;
+typedef sem_t* SEMAPHORE;
+typedef pthread_mutex_t MUTEX;
+typedef pthread_t THREAD;
+typedef void *(*THREAD_START_ROUTINE) (void *);
 
 #endif
 
-YR_THREAD_ID yr_current_thread_id(void);
+int mutex_init(
+        MUTEX* mutex);
 
-int yr_mutex_create(YR_MUTEX*);
-int yr_mutex_destroy(YR_MUTEX*);
-int yr_mutex_lock(YR_MUTEX*);
-int yr_mutex_unlock(YR_MUTEX*);
+void mutex_destroy(
+        MUTEX* mutex);
 
-int yr_thread_storage_create(YR_THREAD_STORAGE_KEY*);
-int yr_thread_storage_destroy(YR_THREAD_STORAGE_KEY*);
-int yr_thread_storage_set_value(YR_THREAD_STORAGE_KEY*, void*);
-void* yr_thread_storage_get_value(YR_THREAD_STORAGE_KEY*);
+void mutex_lock(
+        MUTEX* mutex);
+
+void mutex_unlock(
+        MUTEX* mutex);
+
+int semaphore_init(
+        SEMAPHORE* semaphore,
+        int value);
+
+void semaphore_destroy(
+        SEMAPHORE* semaphore);
+
+void semaphore_wait(
+        SEMAPHORE* semaphore);
+
+void semaphore_release(
+        SEMAPHORE* semaphore);
+
+int create_thread(
+        THREAD* thread,
+        THREAD_START_ROUTINE start_routine,
+        void* param);
+
+void thread_join(
+        THREAD* thread);
 
 #endif
