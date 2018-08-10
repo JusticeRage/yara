@@ -161,9 +161,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		res = true;
 		_current_rules = rule_filename;
 		END:
-		if (rule_file != nullptr) {
-			fclose(rule_file);
-		}
+		fclose(rule_file);
 	}
 	return res;
 }
@@ -211,7 +209,7 @@ const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) con
 {
 	pcallback_data cb_data(new callback_data);
 	cb_data->yara_matches = boost::make_shared<match_vector>();
-	cb_data->pe_info = pe_data;
+	cb_data->pe_info = std::move(pe_data);
 	int retval;
 	if (_rules == nullptr)
 	{
@@ -262,7 +260,7 @@ int get_match_data(int message, void* message_data, void* data)
 	YR_RULE* rule;
 	pMatch m;
 	YR_MODULE_IMPORT* mi; // Used for the CALLBACK_MSG_IMPORT_MODULE message.
-	pcallback_data* cb_data = (pcallback_data*) data;
+	auto cb_data = (pcallback_data*) data;
 	if (!cb_data)
 	{
 		PRINT_ERROR << "Yara wrapper callback called with no data!" << std::endl;
@@ -327,14 +325,9 @@ int get_match_data(int message, void* message_data, void* data)
 			mi = (YR_MODULE_IMPORT*) message_data;
 			if (std::string(mi->module_name) == "manape")
 			{
-				if (!cb_data || cb_data->get()->pe_info == nullptr)
+				if (cb_data->get()->pe_info == nullptr)
 				{
 					PRINT_ERROR << "Yara rule imports the ManaPE module, but no ManaPE data was given!" << std::endl;
-					return ERROR_CALLBACK_ERROR;
-				}
-				else if (!cb_data)
-				{
-					PRINT_ERROR << "No data given to the callback to store results!" << std::endl;
 					return ERROR_CALLBACK_ERROR;
 				}
 				mi->module_data = &*(cb_data->get()->pe_info);
