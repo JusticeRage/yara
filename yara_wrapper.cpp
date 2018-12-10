@@ -75,13 +75,17 @@ void Yara::operator delete(void* p)
 
 // ----------------------------------------------------------------------------
 
-void Yara::_clean_compiler_and_rules() const
+void Yara::_clean_compiler_and_rules()
 {
-	if (_compiler != nullptr) {
+	if (_compiler != nullptr)
+	{
 		yr_compiler_destroy(_compiler);
+		_compiler = nullptr;
 	}
-	if (_rules != nullptr) {
+	if (_rules != nullptr)
+	{
 		yr_rules_destroy(_rules);
+		_rules = nullptr;
 	}
 }
 
@@ -98,6 +102,10 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 	bool res = false;
 	int retval;
+
+	if (!bfs::exists(rule_filename)) {
+		return false;
+	}
 
 	// Look for a compiled version of the rule file first.
 	if (bfs::exists(rule_filename + "c")) // File extension is .yarac instead of .yara.
@@ -196,7 +204,11 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 
 	if (retval != ERROR_SUCCESS)
 	{
-		PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+        #ifdef _DEBUG
+            PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
+        #else
+            PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+        #endif
 		cb_data->yara_matches->clear();
 	}
 
@@ -226,7 +238,11 @@ const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) con
 
 	if (retval != ERROR_SUCCESS)
 	{
-		PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+        #ifdef _DEBUG
+            PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
+        #else
+		    PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+        #endif
 		cb_data->yara_matches->clear();
 	}
 	return cb_data->yara_matches;

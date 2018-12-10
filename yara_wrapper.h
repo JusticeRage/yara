@@ -185,7 +185,7 @@ private:
 	void* operator new(size_t);
 	void* operator new[](size_t);
 
-	void _clean_compiler_and_rules() const;
+	void _clean_compiler_and_rules();
 
 	YR_COMPILER*	_compiler;
 	YR_RULES*		_rules;
