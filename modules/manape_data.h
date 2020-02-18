@@ -24,6 +24,7 @@ along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
  */
 typedef struct manape_file_portion_t {
 	uint32_t	start;
+	uint32_t	end;
 	uint32_t	size;
 } manape_file_portion;
 
@@ -36,4 +37,5 @@ typedef struct manape_data_t {
 	uint32_t				number_of_sections;
 	manape_file_portion		version_info;
 	manape_file_portion		authenticode;
+	manape_file_portion		manifest;
 } manape_data;

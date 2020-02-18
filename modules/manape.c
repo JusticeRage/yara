@@ -34,15 +34,23 @@ declare_integer("num_sections")
 begin_struct_array("sections");
 	declare_integer("start");
 	declare_integer("size");
+	declare_integer("end");
 end_struct_array("sections");
 begin_struct("version_info")
 	declare_integer("start");
 	declare_integer("size");
+	declare_integer("end");
 end_struct("version_info")
 begin_struct("authenticode")
 	declare_integer("start");
 	declare_integer("size");
+	declare_integer("end");
 end_struct("authenticode")
+begin_struct("manifest")
+	declare_integer("start");
+	declare_integer("size");
+	declare_integer("end");
+end_struct("manifest")
 
 end_declarations;
 
@@ -76,11 +84,17 @@ int module_load(
 	{
 		set_integer(pe_info->sections[i].start, module_object, "sections[%i].start", i);
 		set_integer(pe_info->sections[i].size, module_object, "sections[%i].size", i);
+		set_integer(pe_info->sections[i].end, module_object, "sections[%i].end", i);
 	}
 	set_integer(pe_info->version_info.start, module_object, "version_info.start");
 	set_integer(pe_info->version_info.size, module_object, "version_info.size");
+	set_integer(pe_info->version_info.end, module_object, "version_info.end");
 	set_integer(pe_info->authenticode.start, module_object, "authenticode.start");
 	set_integer(pe_info->authenticode.size, module_object, "authenticode.size");
+	set_integer(pe_info->authenticode.end, module_object, "authenticode.end");
+	set_integer(pe_info->manifest.start, module_object, "manifest.start");
+	set_integer(pe_info->manifest.size, module_object, "manifest.size");
+	set_integer(pe_info->manifest.end, module_object, "manifest.end");
 	return ERROR_SUCCESS;
 }
 
