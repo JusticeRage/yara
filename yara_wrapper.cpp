@@ -309,7 +309,7 @@ int get_match_data(int message, void* message_data, void* data)
 							std::string found((char*) match->data, match->data_length);
 							// Yara inserts null bytes when it matches unicode strings. Dirty fix to remove them all.
 							found.erase(std::remove(found.begin(), found.end(), '\0'), found.end());
-							m->add_found_string(found);
+							m->add_found_string(found, match->offset);
 						}
 						else
 						{
@@ -321,7 +321,7 @@ int get_match_data(int message, void* message_data, void* data)
 							if (match->data_length > 20) {
 								ss << "...";
 							}
-							m->add_found_string(ss.str());
+							m->add_found_string(ss.str(), match->offset);
 						}
 						match = match->next;
 					}

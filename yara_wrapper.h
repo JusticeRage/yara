@@ -15,8 +15,7 @@
     along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifndef _YARA_WRAPPER_H_
-#define _YARA_WRAPPER_H_
+#pragma once
 
 #include <iostream>
 #include <iomanip>
@@ -78,6 +77,24 @@ int get_match_data(int message, void* rule, void* data);
 void compiler_callback(int error_level, const char* file_name, int line_number, const char* message, void* user_data);
 
 /**
+ *	@brief	A class representing a Yara match (a string at an offset).
+*/
+class SingleMatch
+{
+public:
+	SingleMatch(const std::string& s, boost::uint64_t offset) :
+		_s(s), _offset(offset)
+	{}
+
+	std::string get_str() const { return _s; }
+	boost::uint64_t get_offset() const { return _offset; }
+
+private:
+	std::string _s;
+	boost::uint64_t _offset;
+};
+
+/**
  *	@brief	An object representing Yara results.
  *
  *	It contains the metadata of the matching rule, and the pattern that was found
@@ -88,17 +105,18 @@ class Match
 public:
 	Match() : _metadata(), _found_strings() {}
 	typedef std::map<std::string, std::string> match_metadata;
+	typedef boost::shared_ptr<SingleMatch> pSingleMatch;
 
 	void add_metadata(const std::string& key, const std::string& value)	{
 		_metadata[key] = value;
 	}
 
-	void add_found_string(const std::string found) {
-		_found_strings.insert(found);
+	void add_found_string(const std::string& found, boost::uint64_t offset) {
+		_found_strings.push_back(boost::make_shared<SingleMatch>(found, offset));
 	}
 
 	match_metadata get_metadata() const { return _metadata; }
-	std::set<std::string> get_found_strings() const { return _found_strings; }
+	std::vector<pSingleMatch> get_found_strings() const { return _found_strings; }
 
 	/**
 	 *	@brief	The [] operator provides fast access to the match's metadata.
@@ -110,8 +128,8 @@ public:
 	std::string operator[](const std::string& key) { return _metadata[key]; }
 
 private:
-	match_metadata			_metadata;
-	std::set<std::string>	_found_strings;
+	match_metadata				_metadata;
+	std::vector<pSingleMatch>	_found_strings;
 };
 
 typedef boost::shared_ptr<Match> pMatch;
@@ -198,5 +216,3 @@ private:
 typedef boost::shared_ptr<Yara> pYara;
 
 } // !namespace yara
-
-#endif // !_YARA_WRAPPER_H_
