@@ -27,6 +27,8 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include <stdlib.h>
+
 #include <yara/ahocorasick.h>
 #include <yara/error.h>
 #include <yara/exec.h>
@@ -149,6 +151,9 @@ static void _yr_scanner_clean_matches(
       (*string)->matches[tidx].count = 0;
       (*string)->matches[tidx].head = NULL;
       (*string)->matches[tidx].tail = NULL;
+      (*string)->private_matches[tidx].count = 0;
+      (*string)->private_matches[tidx].head = NULL;
+      (*string)->private_matches[tidx].tail = NULL;
       (*string)->unconfirmed_matches[tidx].count = 0;
       (*string)->unconfirmed_matches[tidx].head = NULL;
       (*string)->unconfirmed_matches[tidx].tail = NULL;
@@ -178,6 +183,11 @@ YR_API int yr_scanner_create(
       yr_hash_table_create(64, &new_scanner->objects_table),
       yr_scanner_destroy(new_scanner));
 
+  new_scanner->rules = rules;
+  new_scanner->tidx = -1;
+  new_scanner->entry_point = UNDEFINED;
+  new_scanner->canary = rand();
+
   external = rules->externals_list_head;
 
   while (!EXTERNAL_VARIABLE_IS_NULL(external))
@@ -186,6 +196,7 @@ YR_API int yr_scanner_create(
 
     FAIL_ON_ERROR_WITH_CLEANUP(
         yr_object_from_external_variable(external, &object),
+        // cleanup
         yr_scanner_destroy(new_scanner));
 
     FAIL_ON_ERROR_WITH_CLEANUP(
@@ -194,14 +205,13 @@ YR_API int yr_scanner_create(
             external->identifier,
             NULL,
             (void*) object),
+        // cleanup
+        yr_object_destroy(object);
         yr_scanner_destroy(new_scanner));
 
+    yr_object_set_canary(object, new_scanner->canary);
     external++;
   }
-
-  new_scanner->rules = rules;
-  new_scanner->tidx = -1;
-  new_scanner->entry_point = UNDEFINED;
 
   *scanner = new_scanner;
 
@@ -341,6 +351,8 @@ YR_API int yr_scanner_scan_mem_blocks(
   int tidx = 0;
   int result = ERROR_SUCCESS;
 
+  uint64_t elapsed_time;
+
   if (scanner->callback == NULL)
     return ERROR_CALLBACK_REQUIRED;
 
@@ -372,6 +384,7 @@ YR_API int yr_scanner_scan_mem_blocks(
   scanner->file_size = block->size;
 
   yr_set_tidx(tidx);
+  yr_stopwatch_start(&scanner->stopwatch);
 
   result = yr_arena_create(1048576, 0, &scanner->matches_arena);
 
@@ -382,8 +395,6 @@ YR_API int yr_scanner_scan_mem_blocks(
 
   if (result != ERROR_SUCCESS)
     goto _exit;
-
-  yr_stopwatch_start(&scanner->stopwatch);
 
   while (block != NULL)
   {
@@ -474,7 +485,20 @@ YR_API int yr_scanner_scan_mem_blocks(
 
 _exit:
 
-  scanner->rules->time_cost += yr_stopwatch_elapsed_us(&scanner->stopwatch);
+  elapsed_time = yr_stopwatch_elapsed_us(&scanner->stopwatch);
+
+  #ifdef PROFILING_ENABLED
+  yr_rules_foreach(rules, rule)
+  {
+    #ifdef _WIN32
+    InterlockedAdd64(&rule->time_cost, rule->time_cost_per_thread[tidx]);
+    #else
+    __sync_fetch_and_add(&rule->time_cost, rule->time_cost_per_thread[tidx]);
+    #endif
+
+    rule->time_cost_per_thread[tidx] = 0;
+  }
+  #endif
 
   _yr_scanner_clean_matches(scanner);
 
@@ -492,6 +516,7 @@ _exit:
 
   yr_mutex_lock(&rules->mutex);
   YR_BITARRAY_UNSET(rules->tidx_mask, tidx);
+  rules->time_cost += elapsed_time;
   yr_mutex_unlock(&rules->mutex);
 
   yr_set_tidx(-1);
@@ -614,4 +639,3 @@ YR_API YR_RULE* yr_scanner_last_error_rule(
 
   return scanner->last_error_string->rule;
 }
-

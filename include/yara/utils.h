@@ -38,7 +38,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define NULL 0
 #endif
 
-#if defined(HAVE_STDBOOL_H)
+#if defined(HAVE_STDBOOL_H) || (defined(_MSC_VER) && _MSC_VER >= 1800)
 #include <stdbool.h>
 #else
 #ifndef __cplusplus
@@ -58,7 +58,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #if defined(_WIN32) || defined(__CYGWIN__)
   #ifdef YR_BUILDING_DLL
     #ifdef __GNUC__
-      #define YR_API EXTERNC __attribute_((dllexport))
+      #define YR_API EXTERNC __attribute__((dllexport))
       #define YR_DEPRECATED_API EXTERNC __attribute__((deprecated))
     #else
       #define YR_API EXTERNC __declspec(dllexport)
@@ -79,7 +79,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #else
   #if __GNUC__ >= 4
     #define YR_API EXTERNC __attribute__((visibility ("default")))
-    #define YR_DEPRECATED_API EXTERNC __attribute__((deprecated))
+    #define YR_DEPRECATED_API YR_API __attribute__((deprecated))
   #else
     #define YR_API EXTERNC
     #define YR_DEPRECATED_API EXTERNC

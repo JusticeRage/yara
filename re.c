@@ -124,17 +124,17 @@ static bool _yr_re_is_word_char(
 
 
 RE_NODE* yr_re_node_create(
-    int type,
-    RE_NODE* left,
-    RE_NODE* right)
+    int type)
 {
   RE_NODE* result = (RE_NODE*) yr_malloc(sizeof(RE_NODE));
 
   if (result != NULL)
   {
     result->type = type;
-    result->left = left;
-    result->right = right;
+    result->children_head = NULL;
+    result->children_tail = NULL;
+    result->prev_sibling = NULL;
+    result->next_sibling = NULL;
     result->greedy = true;
     result->forward_code = NULL;
     result->backward_code = NULL;
@@ -147,16 +147,61 @@ RE_NODE* yr_re_node_create(
 void yr_re_node_destroy(
     RE_NODE* node)
 {
-  if (node->left != NULL)
-    yr_re_node_destroy(node->left);
+  RE_NODE* child = node->children_head;
+  RE_NODE* next_child;
 
-  if (node->right != NULL)
-    yr_re_node_destroy(node->right);
+  while (child != NULL)
+  {
+    next_child = child->next_sibling;
+    yr_re_node_destroy(child);
+    child = next_child;
+  }
 
   if (node->type == RE_NODE_CLASS)
     yr_free(node->re_class);
 
   yr_free(node);
+}
+
+
+//
+// yr_re_node_append_child
+//
+// Appends a node to the end of the children list.
+//
+void yr_re_node_append_child(
+    RE_NODE* node,
+    RE_NODE* child)
+{
+  if (node->children_head == NULL)
+    node->children_head = child;
+
+  if (node->children_tail != NULL)
+    node->children_tail->next_sibling = child;
+
+  child->prev_sibling = node->children_tail;
+  node->children_tail = child;
+}
+
+
+//
+// yr_re_node_prepend_child
+//
+// Appends a node to the beginning of the children list.
+//
+void yr_re_node_prepend_child(
+    RE_NODE* node,
+    RE_NODE* child)
+{
+  child->next_sibling = node->children_head;
+
+  if (node->children_head != NULL)
+    node->children_head->prev_sibling = child;
+
+  node->children_head = child;
+
+  if (node->children_tail == NULL)
+    node->children_tail = child;
 }
 
 
@@ -169,7 +214,6 @@ int yr_re_ast_create(
     return ERROR_INSUFFICIENT_MEMORY;
 
   (*re_ast)->flags = 0;
-  (*re_ast)->levels = 0;
   (*re_ast)->root_node = NULL;
 
   return ERROR_SUCCESS;
@@ -190,7 +234,7 @@ void yr_re_ast_destroy(
 // yr_re_parse
 //
 // Parses a regexp but don't emit its code. A further call to
-// yr_re_emit_code is required to get the code.
+// yr_re_ast_emit_code is required to get the code.
 //
 
 int yr_re_parse(
@@ -206,7 +250,7 @@ int yr_re_parse(
 // yr_re_parse_hex
 //
 // Parses a hex string but don't emit its code. A further call to
-// yr_re_emit_code is required to get the code.
+// yr_re_ast_emit_code is required to get the code.
 //
 
 int yr_re_parse_hex(
@@ -310,25 +354,30 @@ SIZED_STRING* yr_re_ast_extract_literal(
     RE_AST* re_ast)
 {
   SIZED_STRING* string;
-  RE_NODE* node = re_ast->root_node;
+  RE_NODE* child;
 
-  int i, length = 0;
+  int length = 0;
 
-  while (node != NULL)
+  if (re_ast->root_node->type == RE_NODE_LITERAL)
   {
-    length++;
+    length = 1;
+  }
+  else if (re_ast->root_node->type == RE_NODE_CONCAT)
+  {
+    child = re_ast->root_node->children_tail;
 
-    if (node->type == RE_NODE_LITERAL)
-      break;
+    while (child != NULL && child->type == RE_NODE_LITERAL)
+    {
+      length++;
+      child = child->prev_sibling;
+    }
 
-    if (node->type != RE_NODE_CONCAT)
+    if (child != NULL)
       return NULL;
-
-    if (node->right == NULL ||
-        node->right->type != RE_NODE_LITERAL)
-      return NULL;
-
-    node = node->left;
+  }
+  else
+  {
+    return NULL;
   }
 
   string = (SIZED_STRING*) yr_malloc(sizeof(SIZED_STRING) + length);
@@ -337,19 +386,20 @@ SIZED_STRING* yr_re_ast_extract_literal(
     return NULL;
 
   string->length = length;
-  node = re_ast->root_node;
 
-  // The root node is the end of the string. So let's fill it up backwards.
-  for (i = length - 1; i > 0; i--)
+  if (re_ast->root_node->type == RE_NODE_LITERAL)
   {
-    string->c_string[i] = node->right->value;
-    node = node->left;
+    string->c_string[0] = re_ast->root_node->value;
   }
-
-  if (length > 0)
-    string->c_string[0] = node->value;
-
-  assert(node == NULL || node->type == RE_NODE_LITERAL);
+  else
+  {
+    child = re_ast->root_node->children_tail;
+    while (child != NULL)
+    {
+      string->c_string[--length] = child->value;
+      child = child->prev_sibling;
+    }
+  }
 
   return string;
 }
@@ -358,15 +408,24 @@ SIZED_STRING* yr_re_ast_extract_literal(
 int _yr_re_node_contains_dot_star(
     RE_NODE* re_node)
 {
+  RE_NODE* child;
+
   if ((re_node->type == RE_NODE_STAR || re_node->type == RE_NODE_PLUS) &&
-      re_node->left->type == RE_NODE_ANY)
+      re_node->children_head->type == RE_NODE_ANY)
     return true;
 
-  if (re_node->left != NULL && _yr_re_node_contains_dot_star(re_node->left))
-    return true;
+  if (re_node->type == RE_NODE_CONCAT)
+  {
+    child = re_node->children_tail;
 
-  if (re_node->right != NULL && _yr_re_node_contains_dot_star(re_node->right))
-    return true;
+    while (child != NULL)
+    {
+      if (_yr_re_node_contains_dot_star(child))
+        return true;
+
+      child = child->prev_sibling;
+    }
+  }
 
   return false;
 }
@@ -382,74 +441,123 @@ int yr_re_ast_contains_dot_star(
 //
 // yr_re_ast_split_at_chaining_point
 //
-// In some cases splitting a regular expression in two is more efficient that
-// having a single regular expression. This happens when the regular expression
-// contains a large repetition of any character, for example: /foo.{0,1000}bar/
-// In this case the regexp is split in /foo/ and /bar/ where /bar/ is "chained"
-// to /foo/. This means that /foo/ and /bar/ are handled as individual regexps
-// and when both matches YARA verifies if the distance between the matches
-// complies with the {0,1000} restriction.
-
-// This function traverses the regexp's tree looking for nodes where the regxp
-// should be split. It expects a left-unbalanced tree where the right child of
-// a RE_NODE_CONCAT can't be another RE_NODE_CONCAT. A RE_NODE_CONCAT must be
-// always the left child of its parent if the parent is also a RE_NODE_CONCAT.
+// In some cases splitting a regular expression (or hex string) in two parts is
+// convenient for increasing performance. This happens when the pattern contains
+// a large gap (a.k.a jump), for example: { 01 02 03 [0-999] 04 05 06 }
+// In this case the string is splitted in { 01 02 03 } and { 04 05 06 } where
+// the latter is chained to the former. This means that { 01 02 03 } and
+// { 04 05 06 } are handled as individual strings, and when both of them are
+// found, YARA verifies if the distance between the matches complies with the
+// [0-999] restriction.
 //
+// This function traverses a regexp's AST looking for nodes where it should be
+// splitted. It must be noticed that this only applies to two-level ASTs (i.e.
+// an AST consisting in a RE_NODE_CONCAT at the root where all the children are
+// leaves).
+//
+// For example, { 01 02 03 [0-1000] 04 05 06 [500-2000] 07 08 09 } has the
+// following AST:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (01)
+// |- RE_NODE_LITERAL (02)
+// |- RE_NODE_LITERAL (03)
+// |- RE_NODE_RANGE_ANY (start=0, end=1000)
+// |- RE_NODE_LITERAL (04)
+// |- RE_NODE_LITERAL (05)
+// |- RE_NODE_LITERAL (06)
+// |- RE_NODE_RANGE_ANY (start=500, end=2000)
+// |- RE_NODE_LITERAL (07)
+// |- RE_NODE_LITERAL (08)
+// |- RE_NODE_LITERAL (09)
+//
+// If the AST above is passed in the re_ast argument, it will be trimmed to:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (01)
+// |- RE_NODE_LITERAL (02)
+// |- RE_NODE_LITERAL (03)
+//
+// While remainder_re_ast will be:
+//
+// RE_NODE_CONCAT
+// |
+// |- RE_NODE_LITERAL (04)
+// |- RE_NODE_LITERAL (05)
+// |- RE_NODE_LITERAL (06)
+// |- RE_NODE_RANGE_ANY (start=500, end=2000)
+// |- RE_NODE_LITERAL (07)
+// |- RE_NODE_LITERAL (08)
+// |- RE_NODE_LITERAL (09)
+//
+// The caller is responsible for freeing the new AST in remainder_re_ast by
+// calling yr_re_ast_destroy.
+//
+// The integers pointed to by min_gap and max_gap will be filled with the
+// minimum and maximum gap size between the sub-strings represented by the
+// two ASTs.
 
 int yr_re_ast_split_at_chaining_point(
     RE_AST* re_ast,
-    RE_AST** result_re_ast,
     RE_AST** remainder_re_ast,
     int32_t* min_gap,
     int32_t* max_gap)
 {
-  RE_NODE* node = re_ast->root_node;
-  RE_NODE* child = re_ast->root_node->left;
-  RE_NODE* parent = NULL;
+  RE_NODE* child;
+  RE_NODE* concat;
 
   int result;
 
-  *result_re_ast = re_ast;
   *remainder_re_ast = NULL;
   *min_gap = 0;
   *max_gap = 0;
 
-  while (child != NULL && child->type == RE_NODE_CONCAT)
+  if (re_ast->root_node->type != RE_NODE_CONCAT)
+    return ERROR_SUCCESS;
+
+  child = re_ast->root_node->children_head;
+
+  while (child != NULL)
   {
-    if (child->right != NULL &&
-        child->right->type == RE_NODE_RANGE_ANY &&
-        child->right->greedy == false &&
-        (child->right->start > YR_STRING_CHAINING_THRESHOLD ||
-         child->right->end > YR_STRING_CHAINING_THRESHOLD))
+    if (!child->greedy &&
+         child->type == RE_NODE_RANGE_ANY &&
+         child->prev_sibling != NULL &&
+         child->next_sibling != NULL &&
+        (child->start > YR_STRING_CHAINING_THRESHOLD ||
+         child->end > YR_STRING_CHAINING_THRESHOLD))
     {
       result = yr_re_ast_create(remainder_re_ast);
 
       if (result != ERROR_SUCCESS)
         return result;
 
-      (*remainder_re_ast)->root_node = child->left;
+      concat = yr_re_node_create(RE_NODE_CONCAT);
+
+      if (concat == NULL)
+        return ERROR_INSUFFICIENT_MEMORY;
+
+      concat->children_head = child->next_sibling;
+      concat->children_tail = re_ast->root_node->children_tail;
+
+      re_ast->root_node->children_tail = child->prev_sibling;
+
+      child->prev_sibling->next_sibling = NULL;
+      child->next_sibling->prev_sibling = NULL;
+
+      *min_gap = child->start;
+      *max_gap = child->end;
+
+      (*remainder_re_ast)->root_node = concat;
       (*remainder_re_ast)->flags = re_ast->flags;
 
-      child->left = NULL;
-
-      if (parent != NULL)
-        parent->left = node->right;
-      else
-        (*result_re_ast)->root_node = node->right;
-
-      node->right = NULL;
-
-      *min_gap = child->right->start;
-      *max_gap = child->right->end;
-
-      yr_re_node_destroy(node);
+      yr_re_node_destroy(child);
 
       return ERROR_SUCCESS;
     }
 
-    parent = node;
-    node = child;
-    child = child->left;
+    child = child->next_sibling;
   }
 
   return ERROR_SUCCESS;
@@ -665,8 +773,7 @@ static int _yr_re_emit(
   RE_REPEAT_ARGS* repeat_start_args_addr;
   RE_REPEAT_ANY_ARGS repeat_any_args;
 
-  RE_NODE* left;
-  RE_NODE* right;
+  RE_NODE* child;
 
   int16_t* split_offset_addr = NULL;
   int16_t* jmp_offset_addr = NULL;
@@ -816,34 +923,37 @@ static int _yr_re_emit(
 
   case RE_NODE_CONCAT:
 
-    if (flags & EMIT_BACKWARDS)
-    {
-      left = re_node->right;
-      right = re_node->left;
-    }
-    else
-    {
-      left = re_node->left;
-      right = re_node->right;
-    }
-
     FAIL_ON_ERROR(_yr_re_emit(
         emit_context,
-        left,
+        (flags & EMIT_BACKWARDS)?
+            re_node->children_tail:
+            re_node->children_head,
         flags,
         &instruction_addr,
         &branch_size));
 
     *code_size += branch_size;
 
-    FAIL_ON_ERROR(_yr_re_emit(
-        emit_context,
-        right,
-        flags,
-        NULL,
-        &branch_size));
+    if (flags & EMIT_BACKWARDS)
+      child = re_node->children_tail->prev_sibling;
+    else
+      child = re_node->children_head->next_sibling;
 
-    *code_size += branch_size;
+    while (child != NULL)
+    {
+      FAIL_ON_ERROR(_yr_re_emit(
+          emit_context,
+          child,
+          flags,
+          NULL,
+          &branch_size));
+
+      *code_size += branch_size;
+
+      child = (flags & EMIT_BACKWARDS) ?
+          child->prev_sibling:
+          child->next_sibling;
+    }
 
     break;
 
@@ -857,7 +967,7 @@ static int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_re_emit(
         emit_context,
-        re_node->left,
+        re_node->children_head,
         flags,
         &instruction_addr,
         &branch_size));
@@ -896,7 +1006,7 @@ static int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_re_emit(
         emit_context,
-        re_node->left,
+        re_node->children_head,
         flags,
         NULL,
         &branch_size));
@@ -948,7 +1058,7 @@ static int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_re_emit(
         emit_context,
-        re_node->left,
+        re_node->children_head,
         flags,
         NULL,
         &branch_size));
@@ -975,7 +1085,7 @@ static int _yr_re_emit(
 
     FAIL_ON_ERROR(_yr_re_emit(
         emit_context,
-        re_node->right,
+        re_node->children_tail,
         flags,
         NULL,
         &branch_size));
@@ -1067,7 +1177,7 @@ static int _yr_re_emit(
     {
       FAIL_ON_ERROR(_yr_re_emit(
           emit_context,
-          re_node->left,
+          re_node->children_head,
           flags,
           &instruction_addr,
           &branch_size));
@@ -1113,7 +1223,7 @@ static int _yr_re_emit(
 
       FAIL_ON_ERROR(_yr_re_emit(
           emit_context,
-          re_node->left,
+          re_node->children_head,
           flags | EMIT_DONT_SET_FORWARDS_CODE | EMIT_DONT_SET_BACKWARDS_CODE,
           NULL,
           &branch_size));
@@ -1156,7 +1266,7 @@ static int _yr_re_emit(
     {
       FAIL_ON_ERROR(_yr_re_emit(
           emit_context,
-          re_node->left,
+          re_node->children_head,
           emit_prolog ? flags | EMIT_DONT_SET_FORWARDS_CODE : flags,
           emit_prolog || emit_repeat ? NULL : &instruction_addr,
           &branch_size));
@@ -1632,10 +1742,10 @@ static int _yr_re_fiber_sync(
           if (opcode == RE_OPCODE_REPEAT_END_GREEDY)
             yr_swap(branch_a, branch_b, RE_FIBER*);
 
-          branch_a->sp--;
           branch_b->ip += repeat_args->offset;
         }
 
+        branch_a->sp--;
         branch_a->ip += (1 + sizeof(RE_REPEAT_ARGS));
         break;
 
@@ -2282,45 +2392,53 @@ int yr_re_fast_exec(
 
 
 static void _yr_re_print_node(
-    RE_NODE* re_node)
+    RE_NODE* re_node,
+    uint32_t indent)
 {
+  RE_NODE* child;
   int i;
 
   if (re_node == NULL)
     return;
 
+  if (indent > 0)
+    printf("\n%*s", indent, " ");
   switch (re_node->type)
   {
   case RE_NODE_ALT:
     printf("Alt(");
-    _yr_re_print_node(re_node->left);
-    printf(", ");
-    _yr_re_print_node(re_node->right);
-    printf(")");
+    _yr_re_print_node(re_node->children_head, indent + 4);
+    printf(",");
+    _yr_re_print_node(re_node->children_tail, indent + 4);
+    printf("\n%*s%s", indent, " " , ")");
     break;
 
   case RE_NODE_CONCAT:
     printf("Cat(");
-    _yr_re_print_node(re_node->left);
-    printf(", ");
-    _yr_re_print_node(re_node->right);
-    printf(")");
+    child = re_node->children_head;
+    while (child != NULL)
+    {
+      _yr_re_print_node(child, indent + 4);
+      printf(",");
+      child = child->next_sibling;
+    }
+    printf("\n%*s%s", indent, " ", ")");
     break;
 
   case RE_NODE_STAR:
     printf("Star(");
-    _yr_re_print_node(re_node->left);
+    _yr_re_print_node(re_node->children_head, indent + 4);
     printf(")");
     break;
 
   case RE_NODE_PLUS:
     printf("Plus(");
-    _yr_re_print_node(re_node->left);
+    _yr_re_print_node(re_node->children_head, indent + 4);
     printf(")");
     break;
 
   case RE_NODE_LITERAL:
-    printf("Lit(%02X)", re_node->value);
+    printf("Lit(%c)", re_node->value);
     break;
 
   case RE_NODE_MASKED_LITERAL:
@@ -2357,8 +2475,8 @@ static void _yr_re_print_node(
 
   case RE_NODE_RANGE:
     printf("Range(%d-%d, ", re_node->start, re_node->end);
-    _yr_re_print_node(re_node->left);
-    printf(")");
+    _yr_re_print_node(re_node->children_head, indent + 4);
+    printf("\n%*s%s", indent, " ", ")");
     break;
 
   case RE_NODE_CLASS:
@@ -2378,5 +2496,5 @@ static void _yr_re_print_node(
 void yr_re_print(
     RE_AST* re_ast)
 {
-  _yr_re_print_node(re_ast->root_node);
+  _yr_re_print_node(re_ast->root_node, 0);
 }

@@ -55,21 +55,16 @@ typedef struct _YR_STOPWATCH
 
 } YR_STOPWATCH;
 
-#elif defined(HAVE_CLOCK_GETTIME)
-
-typedef struct _YR_STOPWATCH
-{
-  struct timespec ts_start;
-
-} YR_STOPWATCH;
-
 #else
 
 #include <sys/time.h>
 
 typedef struct _YR_STOPWATCH
 {
-  struct timeval tv_start;
+  union {
+    struct timeval tv_start;
+    struct timespec ts_start;
+  };
 
 } YR_STOPWATCH;
 
@@ -86,4 +81,3 @@ uint64_t yr_stopwatch_elapsed_us(
     YR_STOPWATCH* stopwatch);
 
 #endif
-

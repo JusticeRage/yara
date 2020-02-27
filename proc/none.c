@@ -64,4 +64,3 @@ YR_API YR_MEMORY_BLOCK* yr_process_get_first_memory_block(
 }
 
 #endif
-

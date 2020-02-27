@@ -61,7 +61,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 #define RE_OPCODE_ANY                   0xA0
-#define RE_OPCODE_ANY_EXCEPT_NEW_LINE   0xA1
 #define RE_OPCODE_LITERAL               0xA2
 #define RE_OPCODE_MASKED_LITERAL        0xA4
 #define RE_OPCODE_CLASS                 0xA5
@@ -106,7 +105,6 @@ typedef int RE_MATCH_CALLBACK_FUNC(
     int flags,
     void* args);
 
-
 int yr_re_ast_create(
     RE_AST** re_ast);
 
@@ -126,7 +124,6 @@ int yr_re_ast_contains_dot_star(
 
 int yr_re_ast_split_at_chaining_point(
     RE_AST* re_ast,
-    RE_AST** result_re_ast,
     RE_AST** remainder_re_ast,
     int32_t* min_gap,
     int32_t* max_gap);
@@ -139,13 +136,21 @@ int yr_re_ast_emit_code(
 
 
 RE_NODE* yr_re_node_create(
-    int type,
-    RE_NODE* left,
-    RE_NODE* right);
+    int type);
 
 
 void yr_re_node_destroy(
     RE_NODE* node);
+
+
+void yr_re_node_append_child(
+    RE_NODE* node,
+    RE_NODE* child);
+
+
+void yr_re_node_prepend_child(
+    RE_NODE* node,
+    RE_NODE* child);
 
 
 int yr_re_exec(
@@ -196,6 +201,5 @@ int yr_re_match(
     YR_SCAN_CONTEXT* context,
     RE* re,
     const char* target);
-
 
 #endif

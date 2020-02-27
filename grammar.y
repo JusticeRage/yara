@@ -61,6 +61,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define INTEGER_SET_ENUMERATION   1
 #define INTEGER_SET_RANGE         2
 
+#define FOR_EXPRESSION_ALL 1
+#define FOR_EXPRESSION_ANY 2
+
 #define fail_if_error(e) \
     if (e != ERROR_SUCCESS) \
     { \
@@ -68,6 +71,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
       yyerror(yyscanner, compiler, NULL); \
       YYERROR; \
     } \
+
+
+#define set_flag_or_error(flags, new_flag) \
+    if (flags & new_flag) \
+    { \
+      compiler->last_error = ERROR_DUPLICATED_MODIFIER; \
+      yyerror(yyscanner, compiler, NULL); \
+      YYERROR; \
+    } \
+    else \
+    { \
+      flags |= new_flag; \
+    }
 
 
 #define check_type_with_cleanup(expression, expected_type, op, cleanup) \
@@ -98,12 +114,28 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
       YYERROR; \
     }
 
-
+// check_type(expression, EXPRESSION_TYPE_INTEGER | EXPRESSION_TYPE_FLOAT) is
+// used to ensure that the type of "expression" is either integer or float.
 #define check_type(expression, expected_type, op) \
     check_type_with_cleanup(expression, expected_type, op, )
 
-%}
 
+
+#define loop_vars_cleanup(loop_index) \
+    {  \
+      YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[loop_index]; \
+      int i; \
+      for (i = 0; i < loop_ctx->vars_count; i++) \
+      { \
+        yr_free((void*) loop_ctx->vars[i].identifier); \
+        loop_ctx->vars[i].identifier = NULL; \
+      } \
+      loop_ctx->vars_count = 0; \
+    } \
+
+#define DEFAULT_BASE64_ALPHABET "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+%}
 
 %expect 1   // expect 1 shift/reduce conflicts
 
@@ -119,53 +151,77 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %lex-param {yyscan_t yyscanner}
 %lex-param {YR_COMPILER* compiler}
 
-%token _DOT_DOT_
-%token _RULE_
-%token _PRIVATE_
-%token _GLOBAL_
-%token _META_
-%token <string> _STRINGS_
-%token _CONDITION_
-%token <c_string> _IDENTIFIER_
-%token <c_string> _STRING_IDENTIFIER_
-%token <c_string> _STRING_COUNT_
-%token <c_string> _STRING_OFFSET_
-%token <c_string> _STRING_LENGTH_
+// Token that marks the end of the original file.
+%token _END_OF_FILE_  0                                "end of file"
+
+// Token that marks the end of included files, we can't use  _END_OF_FILE_
+// because bison stops parsing when it sees _END_OF_FILE_, we want to be
+// be able to identify the point where an included file ends, but continuing
+// parsing any content that follows.
+%token _END_OF_INCLUDED_FILE_                          "end of included file"
+
+%token _DOT_DOT_                                       ".."
+%token _RULE_                                          "<rule>"
+%token _PRIVATE_                                       "<private>"
+%token _GLOBAL_                                        "<global>"
+%token _META_                                          "<meta>"
+%token <string> _STRINGS_                              "<strings>"
+%token _CONDITION_                                     "<condition>"
+%token <c_string> _IDENTIFIER_                         "identifier"
+%token <c_string> _STRING_IDENTIFIER_                  "string identifier"
+%token <c_string> _STRING_COUNT_                       "string count"
+%token <c_string> _STRING_OFFSET_                      "string offset"
+%token <c_string> _STRING_LENGTH_                      "string length"
 %token <c_string> _STRING_IDENTIFIER_WITH_WILDCARD_
-%token <integer> _NUMBER_
-%token <double_> _DOUBLE_
-%token <integer> _INTEGER_FUNCTION_
-%token <sized_string> _TEXT_STRING_
-%token <sized_string> _HEX_STRING_
-%token <sized_string> _REGEXP_
-%token _ASCII_
-%token _WIDE_
-%token _XOR_
-%token _NOCASE_
-%token _FULLWORD_
-%token _AT_
-%token _FILESIZE_
-%token _ENTRYPOINT_
-%token _ALL_
-%token _ANY_
-%token _IN_
-%token _OF_
-%token _FOR_
-%token _THEM_
-%token _MATCHES_
-%token _CONTAINS_
-%token _IMPORT_
+    "string identifier with wildcard"
+%token <integer> _NUMBER_                              "integer number"
+%token <double_> _DOUBLE_                              "floating point number"
+%token <integer> _INTEGER_FUNCTION_                    "integer function"
+%token <sized_string> _TEXT_STRING_                    "text string"
+%token <sized_string> _HEX_STRING_                     "hex string"
+%token <sized_string> _REGEXP_                         "regular expression"
+%token _ASCII_                                         "<ascii>"
+%token _WIDE_                                          "<wide>"
+%token _XOR_                                           "<xor>"
+%token _BASE64_                                        "<base64>"
+%token _BASE64_WIDE_                                   "<base64wide>"
+%token _NOCASE_                                        "<nocase>"
+%token _FULLWORD_                                      "<fullword>"
+%token _AT_                                            "<at>"
+%token _FILESIZE_                                      "<filesize>"
+%token _ENTRYPOINT_                                    "<entrypoint>"
+%token _ALL_                                           "<all>"
+%token _ANY_                                           "<any>"
+%token _IN_                                            "<in>"
+%token _OF_                                            "<of>"
+%token _FOR_                                           "<for>"
+%token _THEM_                                          "<them>"
+%token _MATCHES_                                       "<matches>"
+%token _CONTAINS_                                      "<contains>"
+%token _IMPORT_                                        "<import>"
+%token _TRUE_                                          "<true>"
+%token _FALSE_                                         "<false"
+%token _OR_                                            "<or>"
+%token _AND_                                           "<and>"
+%token _NOT_                                           "<not>"
+%token _EQ_                                            "=="
+%token _NEQ_                                           "!="
+%token _LT_                                            "<"
+%token _LE_                                            "<="
+%token _GT_                                            ">"
+%token _GE_                                            ">="
+%token _SHIFT_LEFT_                                    "<<"
+%token _SHIFT_RIGHT_                                   ">>"
 
-%token _TRUE_
-%token _FALSE_
-
+// Operator precedence and associativity. Higher precedence operators are lower
+// in the list. Operators that appear in the same line have the same precedence.
 %left _OR_
 %left _AND_
+%left _EQ_ _NEQ_
+%left _LT_ _LE_ _GT_ _GE_
 %left '|'
 %left '^'
 %left '&'
-%left _EQ_ _NEQ_
-%left _LT_ _LE_ _GT_ _GE_
 %left _SHIFT_LEFT_ _SHIFT_RIGHT_
 %left '+' '-'
 %left '*' '\\' '%'
@@ -184,11 +240,18 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %type <c_string> tags
 %type <c_string> tag_list
 
-%type <integer> string_modifier
-%type <integer> string_modifiers
+%type <modifier> string_modifier
+%type <modifier> string_modifiers
+
+%type <modifier> regexp_modifier
+%type <modifier> regexp_modifiers
+
+%type <modifier> hex_modifier
+%type <modifier> hex_modifiers
 
 %type <integer> integer_set
-
+%type <integer> integer_enumeration
+%type <integer> for_expression
 %type <integer> rule_modifier
 %type <integer> rule_modifiers
 
@@ -215,7 +278,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %destructor { yr_free($$); $$ = NULL; } arguments_list
 
 %union {
-  EXPRESSION      expression;
+  YR_EXPRESSION   expression;
   SIZED_STRING*   sized_string;
   char*           c_string;
   int64_t         integer;
@@ -223,6 +286,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   YR_STRING*      string;
   YR_META*        meta;
   YR_RULE*        rule;
+  YR_MODIFIER     modifier;
 }
 
 
@@ -235,6 +299,10 @@ rules
     | rules error rule      /* on error skip until next rule..*/
     | rules error import    /* .. or import statement */
     | rules error "include" /* .. or include statement */
+    | rules _END_OF_INCLUDED_FILE_
+      {
+        _yr_compiler_pop_file_name(compiler);
+      }
     ;
 
 
@@ -522,10 +590,12 @@ string_declaration
       _TEXT_STRING_ string_modifiers
       {
         int result = yr_parser_reduce_string_declaration(
-            yyscanner, (int32_t) $5, $1, $4, &$$);
+            yyscanner, $5, $1, $4, &$$);
 
         yr_free($1);
         yr_free($4);
+
+        yr_free($5.alphabet);
 
         fail_if_error(result);
         compiler->current_line = 0;
@@ -534,10 +604,14 @@ string_declaration
       {
         compiler->current_line = yyget_lineno(yyscanner);
       }
-      _REGEXP_ string_modifiers
+      _REGEXP_ regexp_modifiers
       {
-        int result = yr_parser_reduce_string_declaration(
-            yyscanner, (int32_t) $5 | STRING_GFLAGS_REGEXP, $1, $4, &$$);
+        int result;
+
+        $5.flags |= STRING_GFLAGS_REGEXP;
+
+        result = yr_parser_reduce_string_declaration(
+            yyscanner, $5, $1, $4, &$$);
 
         yr_free($1);
         yr_free($4);
@@ -546,52 +620,237 @@ string_declaration
 
         compiler->current_line = 0;
       }
-    | _STRING_IDENTIFIER_ '=' _HEX_STRING_
+    | _STRING_IDENTIFIER_ '='
       {
-        int result = yr_parser_reduce_string_declaration(
-            yyscanner, STRING_GFLAGS_HEXADECIMAL, $1, $3, &$$);
+        compiler->current_line = yyget_lineno(yyscanner);
+      }
+      _HEX_STRING_ hex_modifiers
+      {
+        int result;
+
+        $5.flags |= STRING_GFLAGS_HEXADECIMAL;
+
+        result = yr_parser_reduce_string_declaration(
+            yyscanner, $5, $1, $4, &$$);
 
         yr_free($1);
-        yr_free($3);
+        yr_free($4);
 
         fail_if_error(result);
+
+        compiler->current_line = 0;
       }
     ;
 
 
 string_modifiers
-    : /* empty */                         { $$ = 0; }
-    | string_modifiers string_modifier    { $$ = $1 | $2; }
+    : /* empty */
+      {
+        $$.flags = 0;
+        $$.xor_min = 0;
+        $$.xor_max = 0;
+        $$.alphabet = NULL;
+      }
+    | string_modifiers string_modifier
+      {
+        int result = ERROR_SUCCESS;
+
+        $$ = $1;
+
+        set_flag_or_error($$.flags, $2.flags);
+
+        // Only set the xor minimum and maximum if we are dealing with the
+        // xor modifier. If we don't check for this then we can end up with
+        // "xor wide" resulting in whatever is on the stack for "wide"
+        // overwriting the values for xor.
+        if ($2.flags & STRING_GFLAGS_XOR)
+        {
+          $$.xor_min = $2.xor_min;
+          $$.xor_max = $2.xor_max;
+        }
+
+        // Only set the base64 alphabet if we are dealing with the base64
+        // modifier. If we don't check for this then we can end up with
+        // "base64 ascii" resulting in whatever is on the stack for "ascii"
+        // overwriting the values for base64.
+        if (($2.flags & STRING_GFLAGS_BASE64) ||
+            ($2.flags & STRING_GFLAGS_BASE64_WIDE))
+        {
+          if ($$.alphabet != NULL)
+          {
+            if (sized_string_cmp($$.alphabet, $2.alphabet) != 0)
+            {
+              yr_compiler_set_error_extra_info(
+                  compiler, "can not specify multiple alphabets");
+              result = ERROR_INVALID_MODIFIER;
+              yr_free($$.alphabet);
+            }
+            yr_free($2.alphabet);
+          }
+          else
+          {
+            $$.alphabet = $2.alphabet;
+          }
+
+          fail_if_error(result);
+        }
+      }
     ;
 
 
 string_modifier
-    : _WIDE_        { $$ = STRING_GFLAGS_WIDE; }
-    | _ASCII_       { $$ = STRING_GFLAGS_ASCII; }
-    | _NOCASE_      { $$ = STRING_GFLAGS_NO_CASE; }
-    | _FULLWORD_    { $$ = STRING_GFLAGS_FULL_WORD; }
-    | _XOR_         { $$ = STRING_GFLAGS_XOR; }
+    : _WIDE_        { $$.flags = STRING_GFLAGS_WIDE; }
+    | _ASCII_       { $$.flags = STRING_GFLAGS_ASCII; }
+    | _NOCASE_      { $$.flags = STRING_GFLAGS_NO_CASE; }
+    | _FULLWORD_    { $$.flags = STRING_GFLAGS_FULL_WORD; }
+    | _PRIVATE_     { $$.flags = STRING_GFLAGS_PRIVATE; }
+    | _XOR_
+      {
+        $$.flags = STRING_GFLAGS_XOR;
+        $$.xor_min = 0;
+        $$.xor_max = 255;
+      }
+    | _XOR_ '(' _NUMBER_ ')'
+      {
+        int result = ERROR_SUCCESS;
+
+        if ($3 < 0 || $3 > 255)
+        {
+          yr_compiler_set_error_extra_info(compiler, "invalid xor range");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        fail_if_error(result);
+
+        $$.flags = STRING_GFLAGS_XOR;
+        $$.xor_min = $3;
+        $$.xor_max = $3;
+      }
+    /*
+     * Would love to use range here for consistency in the language but that
+     * uses a primary expression which pushes a value on the VM stack we don't
+     * account for.
+     */
+    | _XOR_ '(' _NUMBER_ '-' _NUMBER_ ')'
+      {
+        int result = ERROR_SUCCESS;
+
+        if ($3 < 0)
+        {
+          yr_compiler_set_error_extra_info(
+              compiler, "lower bound for xor range exceeded (min: 0)");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        if ($5 > 255)
+        {
+          yr_compiler_set_error_extra_info(
+              compiler, "upper bound for xor range exceeded (max: 255)");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        if ($3 > $5)
+        {
+          yr_compiler_set_error_extra_info(
+              compiler, "xor lower bound exceeds upper bound");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        fail_if_error(result);
+
+        $$.flags = STRING_GFLAGS_XOR;
+        $$.xor_min = $3;
+        $$.xor_max = $5;
+      }
+    | _BASE64_
+      {
+        $$.flags = STRING_GFLAGS_BASE64;
+        $$.alphabet = sized_string_new(DEFAULT_BASE64_ALPHABET);
+      }
+    | _BASE64_ '(' _TEXT_STRING_ ')'
+      {
+        int result = ERROR_SUCCESS;
+
+        if ($3->length != 64)
+        {
+          yr_free($3);
+          result = yr_compiler_set_error_extra_info(
+              compiler, "length of base64 alphabet must be 64");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        fail_if_error(result);
+
+        $$.flags = STRING_GFLAGS_BASE64;
+        $$.alphabet = $3;
+      }
+    | _BASE64_WIDE_
+      {
+        $$.flags = STRING_GFLAGS_BASE64_WIDE;
+        $$.alphabet = sized_string_new(DEFAULT_BASE64_ALPHABET);
+      }
+    | _BASE64_WIDE_ '(' _TEXT_STRING_ ')'
+      {
+        int result = ERROR_SUCCESS;
+
+        if ($3->length != 64)
+        {
+          yr_free($3);
+          result = yr_compiler_set_error_extra_info(
+              compiler, "length of base64 alphabet must be 64");
+          result = ERROR_INVALID_MODIFIER;
+        }
+
+        fail_if_error(result);
+
+        $$.flags = STRING_GFLAGS_BASE64_WIDE;
+        $$.alphabet = $3;
+      }
     ;
 
+regexp_modifiers
+    : /* empty */                         { $$.flags = 0; }
+    | regexp_modifiers regexp_modifier    { set_flag_or_error($$.flags, $2.flags); }
+    ;
+
+regexp_modifier
+    : _WIDE_        { $$.flags = STRING_GFLAGS_WIDE; }
+    | _ASCII_       { $$.flags = STRING_GFLAGS_ASCII; }
+    | _NOCASE_      { $$.flags = STRING_GFLAGS_NO_CASE; }
+    | _FULLWORD_    { $$.flags = STRING_GFLAGS_FULL_WORD; }
+    | _PRIVATE_     { $$.flags = STRING_GFLAGS_PRIVATE; }
+    ;
+
+hex_modifiers
+    : /* empty */                         { $$.flags = 0; }
+    | hex_modifiers hex_modifier          { set_flag_or_error($$.flags, $2.flags); }
+    ;
+
+hex_modifier
+    : _PRIVATE_     { $$.flags = STRING_GFLAGS_PRIVATE; }
+    ;
 
 identifier
     : _IDENTIFIER_
       {
+        YR_EXPRESSION expr;
+
         int result = ERROR_SUCCESS;
-        int var_index = yr_parser_lookup_loop_variable(yyscanner, $1);
+        int var_index = yr_parser_lookup_loop_variable(yyscanner, $1, &expr);
 
         if (var_index >= 0)
         {
+          // The identifier corresponds to a loop variable.
           result = yr_parser_emit_with_arg(
               yyscanner,
               OP_PUSH_M,
-              LOOP_LOCAL_VARS * var_index,
+              var_index,
               NULL,
               NULL);
 
-          $$.type = EXPRESSION_TYPE_INTEGER;
-          $$.value.integer = UNDEFINED;
-          $$.identifier = compiler->loop_identifier[var_index];
+          // The expression associated to this identifier is the same one
+          // associated to the loop variable.
+          $$ = expr;
         }
         else
         {
@@ -842,8 +1101,15 @@ arguments_list
           case EXPRESSION_TYPE_REGEXP:
             strlcpy($$, "r", YR_MAX_FUNCTION_ARGS);
             break;
+          case EXPRESSION_TYPE_UNKNOWN:
+            yr_free($$);
+            yr_compiler_set_error_extra_info(
+                compiler, "unknown type for argument 1 in function call");
+            fail_if_error(ERROR_WRONG_TYPE);
+            break;
           default:
-            assert(false);
+            // An unknown expression type is OK iff an error ocurred.
+            assert(compiler->last_error != ERROR_SUCCESS);
         }
       }
     | arguments_list ',' expression
@@ -873,10 +1139,23 @@ arguments_list
             case EXPRESSION_TYPE_REGEXP:
               strlcat($1, "r", YR_MAX_FUNCTION_ARGS);
               break;
+            case EXPRESSION_TYPE_UNKNOWN:
+              result = ERROR_WRONG_TYPE;
+              yr_compiler_set_error_extra_info_fmt(
+                  compiler, "unknown type for argument %lu in function call",
+                  // As we add one character per argument, the length of $1 is
+                  // the number of arguments parsed so far, and the argument
+                  // represented by <expression> is length of $1 plus one.
+                  strlen($1) + 1);
+              break;
             default:
-              assert(false);
+              // An unknown expression type is OK iff an error ocurred.
+              assert(compiler->last_error != ERROR_SUCCESS);
           }
         }
+
+        if (result != ERROR_SUCCESS)
+          yr_free($1);
 
         fail_if_error(result);
 
@@ -1027,212 +1306,282 @@ expression
       }
     | _FOR_ for_expression error
       {
-        if (compiler->loop_depth > 0)
+        int i;
+
+        // Free all the loop variable identifiers, including the variables for
+        // the current loop (represented by loop_index), and set loop_index to
+        // -1. This is OK even if we have nested loops. If an error occurs while
+        // parsing the inner loop, it will be propagated to the outer loop
+        // anyways, so it's safe to do this cleanup while processing the error
+        // for the inner loop.
+
+        for (i = 0; i <= compiler->loop_index; i++)
         {
-          compiler->loop_depth--;
-          compiler->loop_identifier[compiler->loop_depth] = NULL;
+          loop_vars_cleanup(i);
         }
 
+        compiler->loop_index = -1;
         YYERROR;
       }
-    | _FOR_ for_expression _IDENTIFIER_ _IN_
+    | _FOR_ for_expression
+      //
+      //  for <min_expression> <identifier> in <iterator> : (<expression>)
+      //
+      //  CLEAR_M 0       ; clear number of true results returned by <expression>
+      //  CLEAR_M 1       ; clear loop iteration counter
+      //  POP_M 2         ; takes the result of <min_expression> from the stack
+      //                  ; and puts it in M[2], once M[0] reaches M[2] the whole
+      //                  ; for expression is satisfied
+      //  <iterator>      ; the instructions generated by the <iterator> depend
+      //                  ; on the type of iterator, but they will initialize the
+      //                  ; iterator and get it ready for the ITER_NEXT instruction
+      // repeat:
+      //  ITER_NEXT       ; reads the iterator object from the stack but leaves it there,
+      //                  ; puts next item in the sequence in the stack, and also a TRUE
+      //                  ; or a FALSE value indicating whether or not there are more items
+      //
+      //  POP_M 3         ; pops the next item from the stack and puts it in M[3], it
+      //
+      //  JTRUE_P exit    ; pops the boolean that tells if we already reached
+      //                  ; the end of the iterator
+      //  <expression>    ; here goes the code for <expression> the value of the
+      //                  ; expressions ends up being at the top of the stack
+      //
+      //  ADD_M 0         ; if <expression> was true M[0] is incremented by one,
+      //                  ; this consumes the <expression>'s result from the stack
+      //  INCR_M 1        ; increments iteration counter
+      //
+      //  PUSH_M 2
+      //  JUNDEF_P repeat ; if M[2] is undefined it's because <min_expression> is "all",
+      //                  ; in that case we need to repeat until there are no more items
+      //
+      //  PUSH_M 0        ; pushes number of true results for <expression>
+      //  PUSH_M 2        ; pushes value of <min_expression>
+      //
+      //  JL_P repeat     ; if M[1] is less M[3] repeat
+      //
+      // exit:
+      //  POP             ; remove the itertor object from the stack
+      //
+      //  PUSH_M 0        ; pushes number of true results for <expression>
+      //  PUSH_M 2        ; pushes value of <min_expression>
+      //
+      //  SWAPUNDEF 1     ; if the value at the top of the stack (M[2]) is UNDEF
+      //                  ; swap the UNDEF with loop iteration counter at M[1]
+      //
+      //  INT_GE          ; compares the the number of true results returned by
+      //                  ; <expression> with the value of <min_expression> or
+      //                  ; with the number of iterations, if <min_expression>
+      //                  ; was "all". A 1 is pushed into the stack if the former
+      //                  ; is greater than or equal to the latter
+      //
       {
-        int result = ERROR_SUCCESS;
-        int var_index;
+        // var_frame is used for accessing local variables used in this loop.
+        // All local variables are accessed using var_frame as a reference,
+        // like var_frame + 0, var_frame + 1, etc. Here we initialize var_frame
+        // with the correct value, which depends on the number of variables
+        // defined by any outer loops.
 
-        if (compiler->loop_depth == YR_MAX_LOOP_NESTING)
+        int var_frame;
+        int result = ERROR_SUCCESS;
+
+        if (compiler->loop_index + 1 == YR_MAX_LOOP_NESTING)
           result = ERROR_LOOP_NESTING_LIMIT_EXCEEDED;
 
         fail_if_error(result);
 
-        var_index = yr_parser_lookup_loop_variable(
-            yyscanner, $3);
+        compiler->loop_index++;
 
-        if (var_index >= 0)
-        {
-          yr_compiler_set_error_extra_info(
-              compiler, $3);
+        // This loop uses 3 internal variables besides the ones explicitly
+        // defined by the user.
+        compiler->loop[compiler->loop_index].vars_internal_count = 3;
 
-          result = ERROR_DUPLICATED_LOOP_IDENTIFIER;
-        }
+        // Initialize the number of variables, this number will be incremented
+        // as variable declaration are processed by for_variables.
+        compiler->loop[compiler->loop_index].vars_count = 0;
 
-        fail_if_error(result);
+        var_frame = _yr_compiler_get_var_frame(compiler);
 
-        // Push end-of-list marker
-        result = yr_parser_emit_with_arg(
-            yyscanner, OP_PUSH, UNDEFINED, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_CLEAR_M, var_frame + 0, NULL, NULL));
 
-        fail_if_error(result);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_CLEAR_M, var_frame + 1, NULL, NULL));
+
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_POP_M, var_frame + 2, NULL, NULL));
       }
-      integer_set ':'
+      for_variables _IN_ iterator ':'
       {
-        int mem_offset = LOOP_LOCAL_VARS * compiler->loop_depth;
-        uint8_t* addr;
+        YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[compiler->loop_index];
+        YR_FIXUP* fixup;
 
-        // Clear counter for number of expressions evaluating
-        // to true.
-        yr_parser_emit_with_arg(
-            yyscanner, OP_CLEAR_M, mem_offset + 1, NULL, NULL);
+        uint8_t* loop_start_addr;
+        void* jmp_arg_addr;
 
-        // Clear iterations counter
-        yr_parser_emit_with_arg(
-            yyscanner, OP_CLEAR_M, mem_offset + 2, NULL, NULL);
+        int var_frame = _yr_compiler_get_var_frame(compiler);
+        int i;
 
-        if ($6 == INTEGER_SET_ENUMERATION)
+        fail_if_error(yr_parser_emit(
+            yyscanner, OP_ITER_NEXT, &loop_start_addr));
+
+        // For each variable generate an instruction that pops the value from
+        // the stack and store it into one memory slot starting at var_frame + 3
+        // because the first 3 slots in the frame are for the internal variables.
+
+        for (i = 0; i < loop_ctx->vars_count; i++)
         {
-          // Pop the first integer
-          yr_parser_emit_with_arg(
-              yyscanner, OP_POP_M, mem_offset, &addr, NULL);
-        }
-        else // INTEGER_SET_RANGE
-        {
-          // Pop higher bound of set range
-          yr_parser_emit_with_arg(
-              yyscanner, OP_POP_M, mem_offset + 3, &addr, NULL);
-
-          // Pop lower bound of set range
-          yr_parser_emit_with_arg(
-              yyscanner, OP_POP_M, mem_offset, NULL, NULL);
+          fail_if_error(yr_parser_emit_with_arg(
+              yyscanner, OP_POP_M, var_frame + 3 + i, NULL, NULL));
         }
 
-        compiler->loop_address[compiler->loop_depth] = addr;
-        compiler->loop_identifier[compiler->loop_depth] = $3;
-        compiler->loop_depth++;
+        fail_if_error(yr_parser_emit_with_arg_reloc(
+            yyscanner,
+            OP_JTRUE_P,
+            0,
+            NULL,
+            &jmp_arg_addr));
+
+        // Push a new fixup entry in the fixup stack so that the jump
+        // destination is set once we know it.
+
+        fixup = (YR_FIXUP*) yr_malloc(sizeof(YR_FIXUP));
+
+        if (fixup == NULL)
+          fail_if_error(ERROR_INSUFFICIENT_MEMORY);
+
+        fixup->address = jmp_arg_addr;
+        fixup->next = compiler->fixup_stack_head;
+        compiler->fixup_stack_head = fixup;
+
+        loop_ctx->addr = loop_start_addr;
       }
       '(' boolean_expression ')'
       {
-        int mem_offset;
+        YR_FIXUP* fixup;
+        uint8_t* pop_addr;
 
-        compiler->loop_depth--;
-        mem_offset = LOOP_LOCAL_VARS * compiler->loop_depth;
+        int var_frame = _yr_compiler_get_var_frame(compiler);
 
-        // The value at the top of the stack is the result of
-        // evaluating the boolean expression, so it could be
-        // 0, 1 or UNDEFINED. Add this value to a counter
-        // keeping the number of expressions evaluating to true.
-        // If the value is UNDEFINED instruction OP_ADD_M
-        // does nothing.
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_ADD_M, var_frame + 0, NULL, NULL));
 
-        yr_parser_emit_with_arg(
-            yyscanner, OP_ADD_M, mem_offset + 1, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_INCR_M, var_frame + 1, NULL, NULL));
 
-        // Increment iterations counter
-        yr_parser_emit_with_arg(
-            yyscanner, OP_INCR_M, mem_offset + 2, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH_M, var_frame + 2, NULL, NULL));
 
-        if ($6 == INTEGER_SET_ENUMERATION)
-        {
-          yr_parser_emit_with_arg_reloc(
-              yyscanner,
-              OP_JNUNDEF,
-              compiler->loop_address[compiler->loop_depth],
-              NULL,
-              NULL);
-        }
-        else // INTEGER_SET_RANGE
-        {
-          // Increment lower bound of integer set
-          yr_parser_emit_with_arg(
-              yyscanner, OP_INCR_M, mem_offset, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg_reloc(
+            yyscanner,
+            OP_JUNDEF_P,
+            compiler->loop[compiler->loop_index].addr,
+            NULL,
+            NULL));
 
-          // Push lower bound of integer set
-          yr_parser_emit_with_arg(
-              yyscanner, OP_PUSH_M, mem_offset, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH_M, var_frame + 0, NULL, NULL));
 
-          // Push higher bound of integer set
-          yr_parser_emit_with_arg(
-              yyscanner, OP_PUSH_M, mem_offset + 3, NULL, NULL);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH_M, var_frame + 2, NULL, NULL));
 
-          // Compare higher bound with lower bound, do loop again
-          // if lower bound is still lower or equal than higher bound
-          yr_parser_emit_with_arg_reloc(
-              yyscanner,
-              OP_JLE,
-              compiler->loop_address[compiler->loop_depth],
-              NULL,
-              NULL);
+        fail_if_error(yr_parser_emit_with_arg_reloc(
+            yyscanner,
+            OP_JL_P,
+            compiler->loop[compiler->loop_index].addr,
+            NULL,
+            NULL));
 
-          yr_parser_emit(yyscanner, OP_POP, NULL);
-          yr_parser_emit(yyscanner, OP_POP, NULL);
-        }
+        fail_if_error(yr_parser_emit(
+            yyscanner, OP_POP, &pop_addr));
 
-        // Pop end-of-list marker.
-        yr_parser_emit(yyscanner, OP_POP, NULL);
+        // Pop from the stack the fixup entry containing the jump's address
+        // that needs to be fixed.
 
-        // At this point the loop quantifier (any, all, 1, 2,..)
-        // is at the top of the stack. Check if the quantifier
-        // is undefined (meaning "all") and replace it with the
-        // iterations counter in that case.
-        yr_parser_emit_with_arg(
-            yyscanner, OP_SWAPUNDEF, mem_offset + 2, NULL, NULL);
+        fixup = compiler->fixup_stack_head;
+        compiler->fixup_stack_head = fixup->next;
 
-        // Compare the loop quantifier with the number of
-        // expressions evaluating to true.
-        yr_parser_emit_with_arg(
-            yyscanner, OP_PUSH_M, mem_offset + 1, NULL, NULL);
+        // Fix the jump's target address.
+        *(void**)(fixup->address) = (void*)(pop_addr);
 
-        yr_parser_emit(yyscanner, OP_INT_LE, NULL);
+        yr_free(fixup);
 
-        compiler->loop_identifier[compiler->loop_depth] = NULL;
-        yr_free($3);
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH_M, var_frame + 0, NULL, NULL));
+
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH_M, var_frame + 2, NULL, NULL));
+
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_SWAPUNDEF, var_frame + 1, NULL, NULL));
+
+        fail_if_error(yr_parser_emit(
+            yyscanner, OP_INT_GE, NULL));
+
+        loop_vars_cleanup(compiler->loop_index);
+
+        compiler->loop_index--;
 
         $$.type = EXPRESSION_TYPE_BOOLEAN;
       }
     | _FOR_ for_expression _OF_ string_set ':'
       {
         int result = ERROR_SUCCESS;
-        int mem_offset = LOOP_LOCAL_VARS * compiler->loop_depth;
+        int var_frame;
         uint8_t* addr;
 
-        if (compiler->loop_depth == YR_MAX_LOOP_NESTING)
+        if (compiler->loop_index + 1 == YR_MAX_LOOP_NESTING)
           result = ERROR_LOOP_NESTING_LIMIT_EXCEEDED;
 
-        if (compiler->loop_for_of_mem_offset != -1)
+        if (compiler->loop_for_of_var_index != -1)
           result = ERROR_NESTED_FOR_OF_LOOP;
 
         fail_if_error(result);
 
-        yr_parser_emit_with_arg(
-            yyscanner, OP_CLEAR_M, mem_offset + 1, NULL, NULL);
+        compiler->loop_index++;
+
+        var_frame = _yr_compiler_get_var_frame(compiler);
 
         yr_parser_emit_with_arg(
-            yyscanner, OP_CLEAR_M, mem_offset + 2, NULL, NULL);
+            yyscanner, OP_CLEAR_M, var_frame + 1, NULL, NULL);
+
+        yr_parser_emit_with_arg(
+            yyscanner, OP_CLEAR_M, var_frame + 2, NULL, NULL);
 
         // Pop the first string.
         yr_parser_emit_with_arg(
-            yyscanner, OP_POP_M, mem_offset, &addr, NULL);
+            yyscanner, OP_POP_M, var_frame, &addr, NULL);
 
-        compiler->loop_for_of_mem_offset = mem_offset;
-        compiler->loop_address[compiler->loop_depth] = addr;
-        compiler->loop_identifier[compiler->loop_depth] = NULL;
-        compiler->loop_depth++;
+        compiler->loop_for_of_var_index = var_frame;
+        compiler->loop[compiler->loop_index].vars_internal_count = 3;
+        compiler->loop[compiler->loop_index].vars_count = 0;
+        compiler->loop[compiler->loop_index].addr = addr;
       }
       '(' boolean_expression ')'
       {
-        int mem_offset;
+        int var_frame = 0;
 
-        compiler->loop_depth--;
-        compiler->loop_for_of_mem_offset = -1;
+        compiler->loop_for_of_var_index = -1;
 
-        mem_offset = LOOP_LOCAL_VARS * compiler->loop_depth;
+        var_frame = _yr_compiler_get_var_frame(compiler);
 
         // Increment counter by the value returned by the
         // boolean expression (0 or 1). If the boolean expression
         // returned UNDEFINED the OP_ADD_M won't do anything.
 
         yr_parser_emit_with_arg(
-            yyscanner, OP_ADD_M, mem_offset + 1, NULL, NULL);
+            yyscanner, OP_ADD_M, var_frame + 1, NULL, NULL);
 
         // Increment iterations counter.
         yr_parser_emit_with_arg(
-            yyscanner, OP_INCR_M, mem_offset + 2, NULL, NULL);
+            yyscanner, OP_INCR_M, var_frame + 2, NULL, NULL);
 
         // If next string is not undefined, go back to the
         // beginning of the loop.
         yr_parser_emit_with_arg_reloc(
             yyscanner,
             OP_JNUNDEF,
-            compiler->loop_address[compiler->loop_depth],
+            compiler->loop[compiler->loop_index].addr,
             NULL,
             NULL);
 
@@ -1244,17 +1593,20 @@ expression
         // undefined (meaning "all") and replace it with the
         // iterations counter in that case.
         yr_parser_emit_with_arg(
-            yyscanner, OP_SWAPUNDEF, mem_offset + 2, NULL, NULL);
+            yyscanner, OP_SWAPUNDEF, var_frame + 2, NULL, NULL);
 
         // Compare the loop quantifier with the number of
         // expressions evaluating to true.
         yr_parser_emit_with_arg(
-            yyscanner, OP_PUSH_M, mem_offset + 1, NULL, NULL);
+            yyscanner, OP_PUSH_M, var_frame + 1, NULL, NULL);
 
         yr_parser_emit(yyscanner, OP_INT_LE, NULL);
 
-        $$.type = EXPRESSION_TYPE_BOOLEAN;
+        loop_vars_cleanup(compiler->loop_index);
 
+        compiler->loop_index--;
+
+        $$.type = EXPRESSION_TYPE_BOOLEAN;
       }
     | for_expression _OF_ string_set
       {
@@ -1410,14 +1762,176 @@ expression
     ;
 
 
+for_variables
+    : _IDENTIFIER_
+      {
+        int result = ERROR_SUCCESS;
+
+        YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[compiler->loop_index];
+
+        if (yr_parser_lookup_loop_variable(yyscanner, $1, NULL) >= 0)
+        {
+          yr_compiler_set_error_extra_info(compiler, $1);
+          yr_free($1);
+
+          result = ERROR_DUPLICATED_LOOP_IDENTIFIER;
+        }
+
+        fail_if_error(result);
+
+        loop_ctx->vars[loop_ctx->vars_count++].identifier = $1;
+
+        assert(loop_ctx->vars_count <= YR_MAX_LOOP_VARS);
+      }
+    | for_variables ',' _IDENTIFIER_
+      {
+        int result = ERROR_SUCCESS;
+
+        YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[compiler->loop_index];
+
+        if (loop_ctx->vars_count == YR_MAX_LOOP_VARS)
+        {
+          yr_compiler_set_error_extra_info(compiler, "too many loop variables");
+          yr_free($3);
+
+          result = ERROR_SYNTAX_ERROR;
+        }
+        else if (yr_parser_lookup_loop_variable(yyscanner, $3, NULL) >= 0)
+        {
+          yr_compiler_set_error_extra_info(compiler, $3);
+          yr_free($3);
+
+          result = ERROR_DUPLICATED_LOOP_IDENTIFIER;
+        }
+
+        fail_if_error(result);
+
+        loop_ctx->vars[loop_ctx->vars_count++].identifier = $3;
+      }
+    ;
+
+iterator
+    : identifier
+      {
+        YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[compiler->loop_index];
+
+        // Initially we assume that the identifier is from a non-iterable type,
+        // this will change later if it's iterable.
+        int result = ERROR_WRONG_TYPE;
+
+        if ($1.type == EXPRESSION_TYPE_OBJECT)
+        {
+          switch($1.value.object->type)
+          {
+            case OBJECT_TYPE_ARRAY:
+              // If iterating an array the loop must define a single variable
+              // that will hold the current item. If a different number of
+              // variables were defined that's an error.
+              if (loop_ctx->vars_count == 1)
+              {
+                loop_ctx->vars[0].type = EXPRESSION_TYPE_OBJECT;
+                loop_ctx->vars[0].value.object = \
+                    object_as_array($1.value.object)->prototype_item;
+
+                result = yr_parser_emit(yyscanner, OP_ITER_START_ARRAY, NULL);
+              }
+              else
+              {
+                yr_compiler_set_error_extra_info_fmt(
+                    compiler,
+                    "iterator for \"%s\" yields a single item on each iteration"
+                    ", but the loop expects %d",
+                    $1.identifier,
+                    loop_ctx->vars_count);
+
+                result = ERROR_SYNTAX_ERROR;
+              }
+              break;
+
+            case OBJECT_TYPE_DICTIONARY:
+              // If iterating a dictionary the loop must define exactly two
+              // variables, one for the key and another for the value . If a
+              // different number of variables were defined that's an error.
+              if (loop_ctx->vars_count == 2)
+              {
+                loop_ctx->vars[0].type = EXPRESSION_TYPE_STRING;
+                loop_ctx->vars[0].value.sized_string = NULL;
+                loop_ctx->vars[1].type = EXPRESSION_TYPE_OBJECT;
+                loop_ctx->vars[1].value.object = \
+                    object_as_array($1.value.object)->prototype_item;
+
+                result = yr_parser_emit(yyscanner, OP_ITER_START_DICT, NULL);
+              }
+              else
+              {
+                yr_compiler_set_error_extra_info_fmt(
+                    compiler,
+                    "iterator for \"%s\" yields a key,value pair item on each iteration",
+                    $1.identifier);
+
+                result = ERROR_SYNTAX_ERROR;
+              }
+              break;
+          }
+        }
+
+        if (result == ERROR_WRONG_TYPE)
+        {
+          yr_compiler_set_error_extra_info_fmt(
+              compiler,
+              "identifier \"%s\" is not iterable",
+              $1.identifier);
+        }
+
+        fail_if_error(result);
+      }
+    | integer_set
+      {
+        int result = ERROR_SUCCESS;
+
+        YR_LOOP_CONTEXT* loop_ctx = &compiler->loop[compiler->loop_index];
+
+        if (loop_ctx->vars_count == 1)
+        {
+          loop_ctx->vars[0].type = EXPRESSION_TYPE_INTEGER;
+          loop_ctx->vars[0].value.integer = UNDEFINED;
+        }
+        else
+        {
+          yr_compiler_set_error_extra_info_fmt(
+              compiler,
+              "iterator yields an integer on each iteration "
+              ", but the loop expects %d",
+              loop_ctx->vars_count);
+
+          result = ERROR_SYNTAX_ERROR;
+        }
+
+        fail_if_error(result);
+      }
+    ;
+
+
 integer_set
-    : '(' integer_enumeration ')'  { $$ = INTEGER_SET_ENUMERATION; }
-    | range                        { $$ = INTEGER_SET_RANGE; }
+    : '(' integer_enumeration ')'
+      {
+        // $2 contains the number of integers in the enumeration
+        fail_if_error(yr_parser_emit_with_arg(
+            yyscanner, OP_PUSH, $2, NULL, NULL));
+
+        fail_if_error(yr_parser_emit(
+            yyscanner, OP_ITER_START_INT_ENUM, NULL));
+      }
+    | range
+      {
+        fail_if_error(yr_parser_emit(
+            yyscanner, OP_ITER_START_INT_RANGE, NULL));
+      }
     ;
 
 
 range
-    : '(' primary_expression _DOT_DOT_  primary_expression ')'
+    : '(' primary_expression _DOT_DOT_ primary_expression ')'
       {
         int result = ERROR_SUCCESS;
 
@@ -1453,6 +1967,8 @@ integer_enumeration
         }
 
         fail_if_error(result);
+
+        $$ = 1;
       }
     | integer_enumeration ',' primary_expression
       {
@@ -1466,6 +1982,8 @@ integer_enumeration
         }
 
         fail_if_error(result);
+
+        $$ = $1 + 1;
       }
     ;
 
@@ -1514,13 +2032,18 @@ string_enumeration_item
 
 for_expression
     : primary_expression
+      {
+        $$ = FOR_EXPRESSION_ANY;
+      }
     | _ALL_
       {
         yr_parser_emit_with_arg(yyscanner, OP_PUSH, UNDEFINED, NULL, NULL);
+        $$ = FOR_EXPRESSION_ALL;
       }
     | _ANY_
       {
         yr_parser_emit_with_arg(yyscanner, OP_PUSH, 1, NULL, NULL);
+        $$ = FOR_EXPRESSION_ANY;
       }
     ;
 
@@ -1676,17 +2199,7 @@ primary_expression
       {
         int result = ERROR_SUCCESS;
 
-        if ($1.type == EXPRESSION_TYPE_INTEGER)  // loop identifier
-        {
-          $$.type = EXPRESSION_TYPE_INTEGER;
-          $$.value.integer = UNDEFINED;
-        }
-        else if ($1.type == EXPRESSION_TYPE_BOOLEAN)  // rule identifier
-        {
-          $$.type = EXPRESSION_TYPE_BOOLEAN;
-          $$.value.integer = UNDEFINED;
-        }
-        else if ($1.type == EXPRESSION_TYPE_OBJECT)
+        if ($1.type == EXPRESSION_TYPE_OBJECT)
         {
           result = yr_parser_emit(
               yyscanner, OP_OBJ_VALUE, NULL);
@@ -1705,6 +2218,11 @@ primary_expression
               $$.value.sized_string = NULL;
               break;
             default:
+              // In a primary expression any identifier that corresponds to an
+              // object must be of type integer, float or string. If "foobar" is
+              // either a function, structure, dictionary or array you can not
+              // use it as:
+              //   condition: foobar
               yr_compiler_set_error_extra_info_fmt(
                   compiler,
                   "wrong usage of identifier \"%s\"",
@@ -1714,7 +2232,7 @@ primary_expression
         }
         else
         {
-          assert(false);
+          $$ = $1;
         }
 
         fail_if_error(result);

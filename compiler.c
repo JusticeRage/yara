@@ -84,7 +84,7 @@ const char* _yr_compiler_default_include_callback(
   int fd = -1;
 
   #if defined(_MSC_VER)
-  _sopen_s(&fd, include_name, _O_RDONLY | _O_BINARY, _SH_DENYRW, _S_IREAD);
+  _sopen_s(&fd, include_name, _O_RDONLY | _O_BINARY, _SH_DENYWR, _S_IREAD);
   #elif defined(_WIN32) || defined(__CYGWIN__)
   fd = open(include_name, O_RDONLY | O_BINARY);
   #else
@@ -173,8 +173,8 @@ YR_API int yr_compiler_create(
   new_compiler->current_line = 0;
   new_compiler->file_name_stack_ptr = 0;
   new_compiler->fixup_stack_head = NULL;
-  new_compiler->loop_depth = 0;
-  new_compiler->loop_for_of_mem_offset = -1;
+  new_compiler->loop_index = -1;
+  new_compiler->loop_for_of_var_index = -1;
   new_compiler->compiled_rules_arena = NULL;
   new_compiler->namespaces_count = 0;
   new_compiler->current_rule = NULL;
@@ -264,7 +264,8 @@ YR_API void yr_compiler_destroy(
   yr_arena_destroy(compiler->automaton_arena);
   yr_arena_destroy(compiler->matches_arena);
 
-  yr_ac_automaton_destroy(compiler->automaton);
+  if (compiler->automaton != NULL)
+    yr_ac_automaton_destroy(compiler->automaton);
 
   yr_hash_table_destroy(
       compiler->rules_table,
@@ -398,6 +399,12 @@ YR_API int yr_compiler_load_atom_quality_table(
   file_size = ftell(fh);
   fseek(fh, 0L, SEEK_SET);
 
+  if (file_size == -1L)
+  {
+    fclose(fh);
+    return ERROR_COULD_NOT_READ_FILE;
+  }
+
   table = yr_malloc(file_size);
 
   if (table == NULL)
@@ -463,6 +470,19 @@ void _yr_compiler_pop_file_name(
     yr_free(compiler->file_name_stack[compiler->file_name_stack_ptr]);
     compiler->file_name_stack[compiler->file_name_stack_ptr] = NULL;
   }
+}
+
+
+int _yr_compiler_get_var_frame(
+    YR_COMPILER* compiler)
+{
+  int i, result = 0;
+
+  for (i = 0; i < compiler->loop_index; i++)
+     result += compiler->loop[i].vars_count +
+               compiler->loop[i].vars_internal_count;
+
+  return result;
 }
 
 
@@ -545,6 +565,8 @@ YR_API int yr_compiler_add_file(
     const char* namespace_,
     const char* file_name)
 {
+  int result;
+
   // Don't allow yr_compiler_add_file() after
   // yr_compiler_get_rules() has been called.
 
@@ -555,21 +577,23 @@ YR_API int yr_compiler_add_file(
 
   assert(compiler->errors == 0);
 
-  if (file_name != NULL)
-    _yr_compiler_push_file_name(compiler, file_name);
-
   if (namespace_ != NULL)
     compiler->last_error = _yr_compiler_set_namespace(compiler, namespace_);
   else
     compiler->last_error = _yr_compiler_set_namespace(compiler, "default");
 
-  if (compiler->last_error != ERROR_SUCCESS)
-  {
-    compiler->errors++;
-    return compiler->errors;
-  }
+  if (compiler->last_error == ERROR_SUCCESS && file_name != NULL)
+    compiler->last_error = _yr_compiler_push_file_name(compiler, file_name);
 
-  return yr_lex_parse_rules_file(rules_file, compiler);
+  if (compiler->last_error != ERROR_SUCCESS)
+    return ++compiler->errors;
+
+  result = yr_lex_parse_rules_file(rules_file, compiler);
+
+  if (file_name != NULL)
+    _yr_compiler_pop_file_name(compiler);
+
+  return result;
 }
 
 
@@ -579,6 +603,8 @@ YR_API int yr_compiler_add_fd(
     const char* namespace_,
     const char* file_name)
 {
+  int result;
+
   // Don't allow yr_compiler_add_fd() after
   // yr_compiler_get_rules() has been called.
 
@@ -589,21 +615,23 @@ YR_API int yr_compiler_add_fd(
 
   assert(compiler->errors == 0);
 
-  if (file_name != NULL)
-    _yr_compiler_push_file_name(compiler, file_name);
-
   if (namespace_ != NULL)
     compiler->last_error = _yr_compiler_set_namespace(compiler, namespace_);
   else
     compiler->last_error = _yr_compiler_set_namespace(compiler, "default");
 
-  if (compiler->last_error != ERROR_SUCCESS)
-  {
-    compiler->errors++;
-    return compiler->errors;
-  }
+  if (compiler->last_error == ERROR_SUCCESS && file_name != NULL)
+    compiler->last_error = _yr_compiler_push_file_name(compiler, file_name);
 
-  return yr_lex_parse_rules_fd(rules_fd, compiler);
+  if (compiler->last_error != ERROR_SUCCESS)
+    return ++compiler->errors;
+
+  result = yr_lex_parse_rules_fd(rules_fd, compiler);
+
+  if (file_name != NULL)
+    _yr_compiler_pop_file_name(compiler);
+
+  return result;
 }
 
 
@@ -628,10 +656,7 @@ YR_API int yr_compiler_add_string(
     compiler->last_error = _yr_compiler_set_namespace(compiler, "default");
 
   if (compiler->last_error != ERROR_SUCCESS)
-  {
-    compiler->errors++;
-    return compiler->errors;
-  }
+    return ++compiler->errors;
 
   return yr_lex_parse_rules_string(rules_string, compiler);
 }
@@ -857,7 +882,7 @@ YR_API int yr_compiler_get_rules(
   return ERROR_SUCCESS;
 }
 
-int _yr_compiler_define_variable(
+static int _yr_compiler_define_variable(
     YR_COMPILER* compiler,
     YR_EXTERNAL_VARIABLE* external)
 {
@@ -865,6 +890,9 @@ int _yr_compiler_define_variable(
   YR_OBJECT* object;
 
   char* id;
+
+  if (external->identifier == NULL)
+    return ERROR_INVALID_ARGUMENT;
 
   object = (YR_OBJECT*) yr_hash_table_lookup(
       compiler->objects_table,
@@ -894,6 +922,9 @@ int _yr_compiler_define_variable(
   {
     char* val;
 
+    if (external->value.s == NULL)
+      return ERROR_INVALID_ARGUMENT;
+
     FAIL_ON_ERROR(yr_arena_write_string(
         compiler->sz_arena,
         external->value.s,
@@ -912,11 +943,13 @@ int _yr_compiler_define_variable(
       external,
       &object));
 
-  FAIL_ON_ERROR(yr_hash_table_add(
+  FAIL_ON_ERROR_WITH_CLEANUP(yr_hash_table_add(
       compiler->objects_table,
       external->identifier,
       NULL,
-      (void*) object));
+      (void*) object),
+      // cleanup
+      yr_object_destroy(object));
 
   return ERROR_SUCCESS;
 }
@@ -1212,6 +1245,19 @@ YR_API char* yr_compiler_get_error_message(
           buffer,
           buffer_size,
           "could not read file");
+      break;
+    case ERROR_INVALID_MODIFIER:
+      snprintf(
+          buffer,
+          buffer_size,
+          "invalid modifier combination \"%s\"",
+          compiler->last_error_extra_info);
+      break;
+    case ERROR_DUPLICATED_MODIFIER:
+      snprintf(
+          buffer,
+          buffer_size,
+          "duplicated modifier");
       break;
   }
 

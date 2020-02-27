@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2017. The YARA Authors. All Rights Reserved.
+Copyright (c) 2018. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,58 +27,46 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <stdint.h>
-#include <stddef.h>
+#ifndef YR_STACK_H
+#define YR_STACK_H
 
-#include <yara.h>
+typedef struct YR_STACK YR_STACK;
 
-const char* RULES = \
-  "import \"pe\""
-  "rule test {"
-  " condition:"
-  "   pe.rva_to_offset(pe.sections[0].virtual_address) == pe.sections[0].raw_data_offset"
-  "}";
-
-YR_RULES* rules = NULL;
-
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv)
+struct YR_STACK
 {
-  YR_COMPILER* compiler;
+    // Pointer to a heap-allocated array containing the void* values put in
+    // in the stack. This array starts with a fixed size and it's grown as
+    // required when new items are pushed into the stack.
+    void* items;
 
-  if (yr_initialize() != ERROR_SUCCESS)
-    return 0;
+    // Current capacity (i.e: the number of items that fit into the array)
+    int capacity;
 
-  if (yr_compiler_create(&compiler) != ERROR_SUCCESS)
-    return 0;
+    // Size of each individual item in the stack.
+    int item_size;
 
-  if (yr_compiler_add_string(compiler, RULES, NULL) == 0)
-    yr_compiler_get_rules(compiler, &rules);
-
-  yr_compiler_destroy(compiler);
-
-  return 0;
-}
-
-
-int callback(int message, void* message_data, void* user_data)
-{
-  return CALLBACK_CONTINUE;
-}
+    // Index of the stack's top in the items array.
+    int top;
+};
 
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
-{
-  if (rules == NULL)
-    return 0;
+int yr_stack_create(
+    int initial_capacity,
+    int item_size,
+    YR_STACK** stack);
 
-  yr_rules_scan_mem(
-      rules,
-      data,
-      size,
-      SCAN_FLAGS_NO_TRYCATCH,
-      callback,
-      NULL,
-      0);
 
-  return 0;
-}
+void yr_stack_destroy(
+    YR_STACK* stack);
+
+
+int yr_stack_push(
+    YR_STACK* stack,
+    void* item);
+
+
+int yr_stack_pop(
+    YR_STACK* stack,
+    void* item);
+
+#endif

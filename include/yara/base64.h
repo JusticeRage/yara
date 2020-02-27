@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2017. The YARA Authors. All Rights Reserved.
+Copyright (c) 2020. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,58 +27,26 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <stdint.h>
-#include <stddef.h>
+#ifndef YR_BASE64_H
+#define YR_BASE64_H
 
-#include <yara.h>
+#include <yara/types.h>
+#include <yara/re.h>
+#include <yara/sizedstr.h>
 
-const char* RULES = \
-  "import \"macho\""
-  "rule test {"
-  " condition:"
-  "   macho.segments[1].sections[0].segname == \"__TEXT\""
-  "}";
+typedef struct BASE64_NODE BASE64_NODE;
 
-YR_RULES* rules = NULL;
+struct BASE64_NODE {
 
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv)
-{
-  YR_COMPILER* compiler;
+  SIZED_STRING* str;
+  int escaped;
+  BASE64_NODE* next;
 
-  if (yr_initialize() != ERROR_SUCCESS)
-    return 0;
+};
 
-  if (yr_compiler_create(&compiler) != ERROR_SUCCESS)
-    return 0;
-
-  if (yr_compiler_add_string(compiler, RULES, NULL) == 0)
-    yr_compiler_get_rules(compiler, &rules);
-
-  yr_compiler_destroy(compiler);
-
-  return 0;
-}
-
-
-int callback(int message, void* message_data, void* user_data)
-{
-  return CALLBACK_CONTINUE;
-}
-
-
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
-{
-  if (rules == NULL)
-    return 0;
-
-  yr_rules_scan_mem(
-      rules,
-      data,
-      size,
-      SCAN_FLAGS_NO_TRYCATCH,
-      callback,
-      NULL,
-      0);
-
-  return 0;
-}
+int yr_base64_ast_from_string(
+    SIZED_STRING* in_str,
+    YR_MODIFIER modifier,
+    RE_AST** re_ast,
+    RE_ERROR* error);
+#endif

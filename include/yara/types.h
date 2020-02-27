@@ -37,7 +37,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <yara/utils.h>
 #include <yara/sizedstr.h>
 #include <yara/stopwatch.h>
-#include <yara/include/yara/threading.h>
+#include <yara/threading.h>
 
 
 #define DECLARE_REFERENCE(type, name) \
@@ -68,6 +68,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define STRING_GFLAGS_DOT_ALL           0x20000
 #define STRING_GFLAGS_DISABLED          0x40000
 #define STRING_GFLAGS_XOR               0x80000
+#define STRING_GFLAGS_PRIVATE           0x100000
+#define STRING_GFLAGS_BASE64            0x200000
+#define STRING_GFLAGS_BASE64_WIDE       0x400000
 
 #define STRING_IS_HEX(x) \
     (((x)->g_flags) & STRING_GFLAGS_HEXADECIMAL)
@@ -128,6 +131,15 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define STRING_IS_XOR(x) \
     (((x)->g_flags) & STRING_GFLAGS_XOR)
+
+#define STRING_IS_BASE64(x) \
+    (((x)->g_flags) & STRING_GFLAGS_BASE64)
+
+#define STRING_IS_BASE64_WIDE(x) \
+    (((x)->g_flags) & STRING_GFLAGS_BASE64_WIDE)
+
+#define STRING_IS_PRIVATE(x) \
+    (((x)->g_flags) & STRING_GFLAGS_PRIVATE)
 
 #define STRING_FOUND(x) \
     ((x)->matches[yr_get_tidx()].tail != NULL)
@@ -208,6 +220,7 @@ typedef struct YR_MATCH YR_MATCH;
 typedef struct YR_SCAN_CONTEXT YR_SCAN_CONTEXT;
 
 typedef union YR_VALUE YR_VALUE;
+typedef struct YR_VALUE_STACK YR_VALUE_STACK;
 
 typedef struct YR_OBJECT YR_OBJECT;
 typedef struct YR_OBJECT_STRUCTURE YR_OBJECT_STRUCTURE;
@@ -225,10 +238,21 @@ typedef struct YR_MODULE_IMPORT YR_MODULE_IMPORT;
 typedef struct YR_MEMORY_BLOCK YR_MEMORY_BLOCK;
 typedef struct YR_MEMORY_BLOCK_ITERATOR YR_MEMORY_BLOCK_ITERATOR;
 
+typedef struct YR_MODIFIER YR_MODIFIER;
+
+typedef struct YR_ITERATOR YR_ITERATOR;
+
 
 #pragma pack(push)
 #pragma pack(8)
 
+struct YR_MODIFIER
+{
+  int32_t flags;
+  uint8_t xor_min;
+  uint8_t xor_max;
+  SIZED_STRING *alphabet;
+};
 
 struct YR_NAMESPACE
 {
@@ -263,19 +287,56 @@ struct YR_STRING
 
   DECLARE_REFERENCE(char*, identifier);
   DECLARE_REFERENCE(uint8_t*, string);
+
+  // Strings are splited in two or more parts when they contain a "gap" that
+  // is larger than YR_STRING_CHAINING_THRESHOLD. This happens in strings like
+  // { 01 02 03 04 [X-Y] 05 06 07 08 } if Y >= X + YR_STRING_CHAINING_THRESHOLD
+  // and also in { 01 02 03 04 [-] 05 06 07 08 }. In both cases the strings are
+  // split in { 01 02 03 04 } and { 05 06 07 08 }, and the two smaller strings
+  // are searched for independently. If some string S is splited in S1 and S2,
+  // S2 is chained to S1. In the example above { 05 06 07 08 } is chained to
+  // { 01 02 03 04 }. The same applies when the string is splitted in more than
+  // two parts, if S is split in S1, S2, and S3. S3 is chained to S2 and S2 is
+  // chained to S1 (it can represented as: S1 <- S2 <- S3).
   DECLARE_REFERENCE(YR_STRING*, chained_to);
+
+  // Pointer to the rule that contains this string.
   DECLARE_REFERENCE(YR_RULE*, rule);
 
+  // When this string is chained to some other string, chain_gap_min and
+  // chain_gap_max contain the minimum and maximum distance between the two
+  // strings. For example in { 01 02 03 04 [X-Y] 05 06 07 08 }, the string
+  // { 05 06 07 08 } is chained to { 01 02 03 04 } and chain_gap_min is X
+  // and chain_gap_max is Y. These fields are ignored for strings that are not
+  // part of a string chain.
   int32_t chain_gap_min;
   int32_t chain_gap_max;
 
+  // If the string can only match at a specific offset (for example if the
+  // condition is "$a at 0" the string $a can only match at offset 0), the
+  // fixed_offset field contains the offset, it have the UNDEFINED value for
+  // strings that can match anywhere.
   int64_t fixed_offset;
 
+  // Each item in the "matches" array represents a list of matches, there's one
+  // list of matches for each thread currently using the compiled rules. Up to
+  // YR_MAX_THREADS can use the compiled rules simultaneosly, that's why the
+  // array has YR_MAX_THREADS slots. The lists contain the matches that have
+  // been found so far.
   YR_MATCHES matches[YR_MAX_THREADS];
-  YR_MATCHES unconfirmed_matches[YR_MAX_THREADS];
 
-  // Used only when PROFILING_ENABLED is defined
-  volatile int64_t time_cost;
+  // "private_matches" is similar to "matches" but it holds the matches for
+  // strings that are flagged as private. The matches for such strings are not
+  // put in the "matches" arrays.
+  YR_MATCHES private_matches[YR_MAX_THREADS];
+
+  // "unconfirmed_matches" is used for strings that are part of a chain. Let's
+  // suppose that the string S is split in two chained strings S1 <- S2. When
+  // a match is found for S1, we can't be sure that S matches until a match for
+  // S2 is found (within the range defined by chain_gap_min and chain_gap_max),
+  // so the matches for S1 are put in "unconfirmed_matches" until they can be
+  // confirmed or discarded.
+  YR_MATCHES unconfirmed_matches[YR_MAX_THREADS];
 };
 
 
@@ -290,8 +351,19 @@ struct YR_RULE
   DECLARE_REFERENCE(YR_STRING*, strings);
   DECLARE_REFERENCE(YR_NAMESPACE*, ns);
 
-  // Used only when PROFILING_ENABLED is defined
+  // Number of atoms generated for this rule.
+  int32_t num_atoms;
+
+  // Used only when PROFILING_ENABLED is defined. This is the sum of all values
+  // in time_cost_per_thread. This is updated once on each call to
+  // yr_scanner_scan_xxx.
   volatile int64_t time_cost;
+
+  // Used only when PROFILING_ENABLED is defined. This array holds the time
+  // cost for each thread using this structure concurrenlty. This is necessary
+  // because a global variable causes too much contention while trying to
+  // increment in a synchronized way from multiple threads.
+  int64_t time_cost_per_thread[YR_MAX_THREADS];
 };
 
 
@@ -333,8 +405,8 @@ typedef YR_AC_MATCH_TABLE_ENTRY*  YR_AC_MATCH_TABLE;
 
 struct YR_AC_TABLES
 {
-  YR_AC_TRANSITION* transitions;
-  YR_AC_MATCH_TABLE_ENTRY* matches;
+  YR_AC_TRANSITION_TABLE transitions;
+  YR_AC_MATCH_TABLE matches;
 };
 
 
@@ -387,8 +459,10 @@ struct RE_NODE
 
   RE_CLASS* re_class;
 
-  RE_NODE* left;
-  RE_NODE* right;
+  RE_NODE* children_head;
+  RE_NODE* children_tail;
+  RE_NODE* prev_sibling;
+  RE_NODE* next_sibling;
 
   uint8_t* forward_code;
   uint8_t* backward_code;
@@ -405,7 +479,6 @@ struct RE_CLASS
 struct RE_AST
 {
   uint32_t flags;
-  uint16_t levels;
   RE_NODE* root_node;
 };
 
@@ -471,12 +544,10 @@ struct YR_MATCH
   // Pointer to a buffer containing a portion of the matched data. The size of
   // the buffer is data_length. data_length is always <= length and is limited
   // to MAX_MATCH_DATA bytes.
-
   const uint8_t* data;
 
   // If the match belongs to a chained string chain_length contains the
   // length of the chain. This field is used only in unconfirmed matches.
-
   int32_t chain_length;
 
   YR_MATCH* prev;
@@ -620,6 +691,13 @@ struct YR_SCAN_CONTEXT
   // in the range [0, YR_MAX_THREADS)
   int tidx;
 
+  // Canary value used for preventing hand-crafted objects from being embedded
+  // in compiled rules and used to exploit YARA. The canary value is initialized
+  // to a random value and is subsequently set to all objects created by
+  // yr_object_create. The canary is verified when objects are used by
+  // yr_execute_code.
+  int canary;
+
   // Scan timeout in nanoseconds.
   uint64_t timeout;
 
@@ -665,8 +743,16 @@ union YR_VALUE
   void* p;
   YR_OBJECT* o;
   YR_STRING* s;
+  YR_ITERATOR* it;
   SIZED_STRING* ss;
   RE* re;
+};
+
+struct YR_VALUE_STACK
+{
+  int32_t   sp;
+  int32_t   capacity;
+  YR_VALUE* items;
 };
 
 
@@ -742,7 +828,13 @@ struct YR_STRUCTURE_MEMBER
 
 struct YR_ARRAY_ITEMS
 {
-  int count;
+  // Capacity is the size of the objects array.
+  int capacity;
+
+  // Length is determined by the last element in the array. If the index of the
+  // last element is N, then length is N+1 because indexes start at 0.
+  int length;
+
   YR_OBJECT* objects[1];
 };
 
@@ -753,11 +845,95 @@ struct YR_DICTIONARY_ITEMS
   int free;
 
   struct {
-
-    char* key;
+    SIZED_STRING* key;
     YR_OBJECT* obj;
-
   } objects[1];
+};
+
+
+
+// Iterators are used in loops of the form:
+//
+// for <any|all|number> <identifier> in <iterator> : ( <expression> )
+//
+// The YR_ITERATOR struct abstracts the many different types of objects that
+// can be iterated. Each type of iterator must provide a "next" function which
+// is called multiple times for retrieving elements from the iterator. This
+// function is responsible for pushing the next item in the stack and a boolean
+// indicating if the end of the iterator has been reached. The boolean must be
+// pushed first, so that the next item is in the top of the stack when the
+// function returns.
+//
+//  +------------+
+//  | next item  |  <- top of the stack
+//  +------------+
+//  | false      |  <- false indicates that there are more items
+//  +------------+
+//  |   . . .    |
+//
+// The boolean shouldn't be true if the next item was pushed in the stack, it
+// can be true only when all the items have been returned in previous calls,
+// in which case the value for the next item should be UNDEFINED. The stack
+// should look like this after the last call to "next":
+//
+//  +------------+
+//  | undefined  |  <- next item is undefined.
+//  +------------+
+//  | true       |  <- true indicates that are no more items.
+//  +------------+
+//  |   . . .    |
+//
+// We can't use the UNDEFINED value in the stack as an indicator of the end
+// of the iterator, because it's legitimate for an iterator to return UNDEFINED
+// items in the middle of the iteration.
+//
+// The "next" function should return ERROR_SUCCESS if everything went fine or
+// an error code in case of error.
+
+typedef int (*YR_ITERATOR_NEXT_FUNC)(
+    YR_ITERATOR* self,
+    YR_VALUE_STACK* stack);
+
+
+struct YR_ARRAY_ITERATOR
+{
+  YR_OBJECT* array;
+  int index;
+};
+
+
+struct YR_DICT_ITERATOR
+{
+  YR_OBJECT* dict;
+  int index;
+};
+
+
+struct YR_INT_RANGE_ITERATOR
+{
+  int64_t next;
+  int64_t last;
+};
+
+
+struct YR_INT_ENUM_ITERATOR
+{
+  int next;
+  int count;
+  int64_t items[1];
+};
+
+
+struct YR_ITERATOR
+{
+  YR_ITERATOR_NEXT_FUNC next;
+
+  union {
+    struct YR_ARRAY_ITERATOR array_it;
+    struct YR_DICT_ITERATOR dict_it;
+    struct YR_INT_RANGE_ITERATOR int_range_it;
+    struct YR_INT_ENUM_ITERATOR int_enum_it;
+  };
 };
 
 
