@@ -1,18 +1,18 @@
 /*
-    This file is part of Manalyze.
+	This file is part of Manalyze.
 
-    Manalyze is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	Manalyze is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    Manalyze is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	Manalyze is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #include "yara_wrapper.h"
@@ -22,18 +22,11 @@ namespace yara
 
 namespace bfs = boost::filesystem;
 
-int Yara::_instance_count = 0;
-
 Yara::Yara()
 {
 	_compiler = nullptr;
 	_rules = nullptr;
 	_current_rules = "";
-
-	if (_instance_count == 0) {
-		yr_initialize();
-	}
-	++_instance_count;
 }
 
 // ----------------------------------------------------------------------------
@@ -41,17 +34,24 @@ Yara::Yara()
 Yara::~Yara()
 {
 	_clean_compiler_and_rules();
-
-	--_instance_count;
-	if (_instance_count == 0) {
-		yr_finalize();
-	}
 }
 
 // ----------------------------------------------------------------------------
 
 pYara Yara::create() {
 	return boost::make_shared<Yara>();
+}
+
+// ----------------------------------------------------------------------------
+
+void Yara::initialize() {
+	yr_initialize();
+}
+
+// ----------------------------------------------------------------------------
+
+void Yara::finalize() {
+	yr_finalize();
 }
 
 // ----------------------------------------------------------------------------
@@ -197,18 +197,18 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 	retval = yr_rules_scan_mem(_rules,
 							   &copy[0],		// The bytes to scan
 							   bytes.size(),	// Number of bytes
-                               SCAN_FLAGS_PROCESS_MEMORY,
+							   SCAN_FLAGS_PROCESS_MEMORY,
 							   get_match_data,
 							   &cb_data,			// The vector to fill
 							   0);				// No timeout)
 
 	if (retval != ERROR_SUCCESS)
 	{
-        #ifdef _DEBUG
-            PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
-        #else
-            PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
-        #endif
+		#ifdef _DEBUG
+			PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
+		#else
+			PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+		#endif
 		cb_data->yara_matches->clear();
 	}
 
@@ -230,19 +230,19 @@ const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) con
 	}
 
 	retval = yr_rules_scan_file(_rules,
-						        path.c_str(),
-                                SCAN_FLAGS_PROCESS_MEMORY,
+								path.c_str(),
+								SCAN_FLAGS_PROCESS_MEMORY,
 								get_match_data,
 								&cb_data,
 								0);
 
 	if (retval != ERROR_SUCCESS)
 	{
-        #ifdef _DEBUG
-            PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
-        #else
-		    PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
-        #endif
+		#ifdef _DEBUG
+			PRINT_ERROR << "Yara error: " << translate_error(retval) << " ("  << _current_rules << ")" << std::endl;
+		#else
+			PRINT_ERROR << "Yara error: " << translate_error(retval) << std::endl;
+		#endif
 		cb_data->yara_matches->clear();
 	}
 	return cb_data->yara_matches;

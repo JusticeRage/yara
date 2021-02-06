@@ -1,18 +1,18 @@
 /*
-    This file is part of Manalyze.
+	This file is part of Manalyze.
 
-    Manalyze is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+	Manalyze is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
 
-    Manalyze is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	Manalyze is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    You should have received a copy of the GNU General Public License
-    along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
+	You should have received a copy of the GNU General Public License
+	along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 #pragma once
@@ -153,6 +153,16 @@ public:
 	Y_DECLSPEC static boost::shared_ptr<Yara> create();
 
 	/**
+	 *	@brief	Initializes the Yara engine.
+	 */
+	Y_DECLSPEC static void initialize();
+
+	/**
+	 *	@brief	Terminates the Yara engine.
+	 */
+	Y_DECLSPEC static void finalize();
+
+	/**
 	 *	@brief	Loads rules inside a Yara engine.
 	 *
 	 *	Scanning will not work before rules have been loaded.
@@ -205,12 +215,11 @@ private:
 
 	void _clean_compiler_and_rules();
 
-	YR_COMPILER*	_compiler;
-	YR_RULES*		_rules;
+	YR_COMPILER*		_compiler;
+	YR_RULES*			_rules;
 
-	std::string		_current_rules;
+	std::string			_current_rules;
 
-	static int		_instance_count;
 };
 
 typedef boost::shared_ptr<Yara> pYara;
