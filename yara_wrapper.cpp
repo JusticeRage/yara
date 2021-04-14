@@ -136,7 +136,9 @@ bool Yara::load_rules(const std::string& rule_filename)
 		return false;
 	}
 
-	if (retval == ERROR_SUCCESS) {
+	if (retval == ERROR_SUCCESS) 
+	{
+		_current_rules = rule_filename;
 		return true;
 	}
 	else if (retval == ERROR_INVALID_FILE || retval == ERROR_UNSUPPORTED_FILE_VERSION) // Uncompiled rules
