@@ -69,12 +69,12 @@ namespace yara {
  *
  *	@param	void* data	A pointer to a pcallback_data object which will be filled with the matching rules' metadata.
  */
-int get_match_data(int message, void* rule, void* data);
+int get_match_data(YR_SCAN_CONTEXT* ctx, int message, void* rule, void* data);
 
 /**
  *	@brief	A callback used to display compiling error and warning for rules.
  */
-void compiler_callback(int error_level, const char* file_name, int line_number, const char* message, void* user_data);
+void compiler_callback(int error_level, const char* file_name, int line_number, const YR_RULE* rule, const char* message, void* user_data);
 
 /**
  *	@brief	A class representing a Yara match (a string at an offset).

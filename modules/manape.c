@@ -78,23 +78,23 @@ int module_load(
 		return ERROR_INVALID_ARGUMENT;
 	}
 	manape_data* pe_info = (manape_data*) module_data;
-	set_integer(pe_info->entrypoint, module_object, "ep");
-	set_integer(pe_info->number_of_sections, module_object, "num_sections");
+	yr_set_integer(pe_info->entrypoint, module_object, "ep");
+	yr_set_integer(pe_info->number_of_sections, module_object, "num_sections");
 	for (i = 0 ; i < pe_info->number_of_sections ; ++i)
 	{
-		set_integer(pe_info->sections[i].start, module_object, "sections[%i].start", i);
-		set_integer(pe_info->sections[i].size, module_object, "sections[%i].size", i);
-		set_integer(pe_info->sections[i].end, module_object, "sections[%i].end", i);
+		yr_set_integer(pe_info->sections[i].start, module_object, "sections[%i].start", i);
+		yr_set_integer(pe_info->sections[i].size, module_object, "sections[%i].size", i);
+		yr_set_integer(pe_info->sections[i].end, module_object, "sections[%i].end", i);
 	}
-	set_integer(pe_info->version_info.start, module_object, "version_info.start");
-	set_integer(pe_info->version_info.size, module_object, "version_info.size");
-	set_integer(pe_info->version_info.end, module_object, "version_info.end");
-	set_integer(pe_info->authenticode.start, module_object, "authenticode.start");
-	set_integer(pe_info->authenticode.size, module_object, "authenticode.size");
-	set_integer(pe_info->authenticode.end, module_object, "authenticode.end");
-	set_integer(pe_info->manifest.start, module_object, "manifest.start");
-	set_integer(pe_info->manifest.size, module_object, "manifest.size");
-	set_integer(pe_info->manifest.end, module_object, "manifest.end");
+	yr_set_integer(pe_info->version_info.start, module_object, "version_info.start");
+	yr_set_integer(pe_info->version_info.size, module_object, "version_info.size");
+	yr_set_integer(pe_info->version_info.end, module_object, "version_info.end");
+	yr_set_integer(pe_info->authenticode.start, module_object, "authenticode.start");
+	yr_set_integer(pe_info->authenticode.size, module_object, "authenticode.size");
+	yr_set_integer(pe_info->authenticode.end, module_object, "authenticode.end");
+	yr_set_integer(pe_info->manifest.start, module_object, "manifest.start");
+	yr_set_integer(pe_info->manifest.size, module_object, "manifest.size");
+	yr_set_integer(pe_info->manifest.end, module_object, "manifest.end");
 	return ERROR_SUCCESS;
 }
 

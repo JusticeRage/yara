@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2014. The YARA Authors. All Rights Reserved.
+Copyright (c) 2021. The YARA Authors. All Rights Reserved.
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
@@ -27,45 +27,43 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <yara/modules.h>
+#ifndef YR_UNICODE_H
+#define YR_UNICODE_H
 
-#define MODULE_NAME demo
+#ifdef _MSC_VER
+#include <tchar.h>
+#define char_t TCHAR
+#define PF_S   "hs"
+#define PF_C   "hc"
 
-begin_declarations;
+#else
+#define char_t char
+#define _T(x)  x
+#define PF_S   "s"
+#define PF_C   "c"
 
-  declare_string("greeting");
+#ifdef __CYGWIN__
+#define _tcstok_s strtok_r
+#else
+#define _tcstok_s strtok_s
+#endif
 
-end_declarations;
+#define _tcscmp    strcmp
+#define _tcsdup    strdup
+#define _tcschr    strchr
+#define _tcslen    strlen
+#define _tcsstr    strstr
+#define _tcstol    strtol
+#define _tcstoll   strtoll
+#define _tstoi     atoi
+#define _tstof     atof
+#define _tisdigit  isdigit
+#define _tfopen    fopen
+#define _ftprintf  fprintf
+#define _stprintf  sprintf
+#define _tprintf   printf
+#define _tmain     main
+#define _sntprintf snprintf
+#endif
 
-
-int module_initialize(
-    YR_MODULE* module)
-{
-  return ERROR_SUCCESS;
-}
-
-
-int module_finalize(
-    YR_MODULE* module)
-{
-  return ERROR_SUCCESS;
-}
-
-
-int module_load(
-    YR_SCAN_CONTEXT* context,
-    YR_OBJECT* module_object,
-    void* module_data,
-    size_t module_data_size)
-{
-  set_string("Hello World!", module_object, "greeting");
-
-  return ERROR_SUCCESS;
-}
-
-
-int module_unload(
-    YR_OBJECT* module_object)
-{
-  return ERROR_SUCCESS;
-}
+#endif

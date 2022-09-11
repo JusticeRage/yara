@@ -45,17 +45,16 @@ pYara Yara::create() {
 // ----------------------------------------------------------------------------
 
 void Yara::initialize() {
-	yr_initialize();
+    yr_initialize();
 }
 
 // ----------------------------------------------------------------------------
 
 void Yara::finalize() {
-	yr_finalize();
+    yr_finalize();
 }
 
 // ----------------------------------------------------------------------------
-
 void* Yara::operator new(size_t size)
 {
 	void* p = malloc(size);
@@ -141,7 +140,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		_current_rules = rule_filename;
 		return true;
 	}
-	else if (retval == ERROR_INVALID_FILE || retval == ERROR_UNSUPPORTED_FILE_VERSION) // Uncompiled rules
+	else if (retval == ERROR_INVALID_FILE) // Uncompiled rules
 	{
 		if (yr_compiler_create(&_compiler) != ERROR_SUCCESS) {
 			return false;
@@ -252,11 +251,11 @@ const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) con
 
 // ----------------------------------------------------------------------------
 
-void compiler_callback(int error_level, const char* file_name, int line_number, const char* message, void* user_data)
+void compiler_callback(int error_level, const char* file_name, int line_number, const YR_RULE* rule, const char* message, void* user_data)
 {
 	if (error_level == YARA_ERROR_LEVEL_ERROR)
 	{
-		PRINT_ERROR << "[Yara compiler] " << (file_name != nullptr ? file_name : "") << "(" << line_number
+		PRINT_ERROR << "[Yara compiler] " << (file_name != nullptr ? file_name : "") << " (" << line_number
 			<< ") : " << message << std::endl;
 	}
 	#ifdef _DEBUG // Warnings are very verbose, do not display them unless this is a debug release.
@@ -270,7 +269,7 @@ void compiler_callback(int error_level, const char* file_name, int line_number, 
 
 // ----------------------------------------------------------------------------
 
-int get_match_data(int message, void* message_data, void* data)
+int get_match_data(YR_SCAN_CONTEXT* ctx, int message, void* message_data, void* data)
 {
 	matches target;
 	YR_META* meta;
@@ -290,43 +289,37 @@ int get_match_data(int message, void* message_data, void* data)
 		case CALLBACK_MSG_RULE_MATCHING:
 			rule = (YR_RULE*) message_data;
 			target = cb_data->get()->yara_matches;
-			meta = rule->metas;
-			s = rule->strings;
 			m = boost::make_shared<Match>();
 
-			while (!META_IS_NULL(meta))
+            yr_rule_metas_foreach(rule, meta)
 			{
 				m->add_metadata(std::string(meta->identifier), meta->string);
 				++meta;
 			}
-			while (!STRING_IS_NULL(s))
+            yr_rule_strings_foreach(rule, s)
 			{
-				if (STRING_FOUND(s))
+                YR_MATCH* match;
+                yr_string_matches_foreach(ctx, s, match)
 				{
-					YR_MATCH* match = STRING_MATCHES(s).head;
-					while (match != nullptr)
-					{
-						if (!STRING_IS_HEX(s))
-						{
-							std::string found((char*) match->data, match->data_length);
-							// Yara inserts null bytes when it matches unicode strings. Dirty fix to remove them all.
-							found.erase(std::remove(found.begin(), found.end(), '\0'), found.end());
-							m->add_found_string(found, match->offset);
-						}
-						else
-						{
-							std::stringstream ss;
-							ss << std::hex;
-							for (int i = 0; i < std::min(20, match->data_length); i++) {
-								ss << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
-							}
-							if (match->data_length > 20) {
-								ss << "...";
-							}
-							m->add_found_string(ss.str(), match->offset);
-						}
-						match = match->next;
-					}
+                    if (!STRING_IS_HEX(s))
+                    {
+                        std::string found((char*) match->data, match->data_length);
+                        // Yara inserts null bytes when it matches unicode strings. Dirty fix to remove them all.
+                        found.erase(std::remove(found.begin(), found.end(), '\0'), found.end());
+                        m->add_found_string(found, match->offset);
+                    }
+                    else
+                    {
+                        std::stringstream ss;
+                        ss << std::hex;
+                        for (int i = 0; i < std::min(20, match->data_length); i++) {
+                            ss << std::setw(2) << std::setfill('0') << static_cast<unsigned int>(match->data[i]) << " "; // Don't interpret as a char
+                        }
+                        if (match->data_length > 20) {
+                            ss << "...";
+                        }
+                        m->add_found_string(ss.str(), match->offset);
+                    }
 				}
 				++s;
 			}

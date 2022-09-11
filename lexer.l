@@ -196,11 +196,19 @@ octdigit      [0-7]
 "for"                   { return _FOR_;         }
 "all"                   { return _ALL_;         }
 "any"                   { return _ANY_;         }
+"none"                  { return _NONE_;        }
 "entrypoint"            { return _ENTRYPOINT_;  }
 "filesize"              { return _FILESIZE_;    }
 "matches"               { return _MATCHES_;     }
 "contains"              { return _CONTAINS_;    }
+"startswith"            { return _STARTSWITH_;  }
+"endswith"              { return _ENDSWITH_;    }
+"icontains"             { return _ICONTAINS_;   }
+"istartswith"           { return _ISTARTSWITH_; }
+"iendswith"             { return _IENDSWITH_;   }
+"iequals"               { return _IEQUALS_;     }
 "import"                { return _IMPORT_;      }
+"defined"               { return _DEFINED_;     }
 
 
 "/*"                    { BEGIN(comment);       }
@@ -276,10 +284,15 @@ include[ \t]+\"         {
       }
     }
 
+    YR_NAMESPACE* ns = (YR_NAMESPACE*) yr_arena_get_ptr(
+        compiler->arena,
+        YR_NAMESPACES_TABLE,
+        compiler->current_namespace_idx * sizeof(struct YR_NAMESPACE));
+
     included_rules = compiler->include_callback(
         include_path,
         current_file_name,
-        compiler->current_namespace->name,
+        ns->name,
         compiler->incl_clbk_user_data);
 
     if (included_rules != NULL)
@@ -569,6 +582,7 @@ u?int(8|16|32)(be)? {
 
   *yyextra->lex_buf_ptr = '\0';
   memcpy(s->c_string, yyextra->lex_buf, yyextra->lex_buf_len + 1);
+
   yylval->sized_string = s;
 
   BEGIN(INITIAL);
@@ -581,6 +595,14 @@ u?int(8|16|32)(be)? {
 
   lex_check_space_ok("\t", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
   *yyextra->lex_buf_ptr++ = '\t';
+  yyextra->lex_buf_len++;
+}
+
+
+<str>\\r   {
+
+  lex_check_space_ok("\r", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
+  *yyextra->lex_buf_ptr++ = '\r';
   yyextra->lex_buf_len++;
 }
 
@@ -611,12 +633,12 @@ u?int(8|16|32)(be)? {
 
 <str>\\x{hexdigit}{2} {
 
-   int result;
+  int result;
 
-   sscanf( yytext + 2, "%x", &result );
-   lex_check_space_ok("X", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
-   *yyextra->lex_buf_ptr++ = result;
-   yyextra->lex_buf_len++;
+  sscanf(yytext + 2, "%x", &result);
+  lex_check_space_ok("X", yyextra->lex_buf_len, YR_LEX_BUF_SIZE);
+  *yyextra->lex_buf_ptr++ = result;
+  yyextra->lex_buf_len++;
 }
 
 
@@ -647,6 +669,7 @@ u?int(8|16|32)(be)? {
 
     *yyextra->lex_buf_ptr = '\0';
     strlcpy(s->c_string, yyextra->lex_buf, s->length + 1);
+
     yylval->sized_string = s;
   }
   else
@@ -706,7 +729,7 @@ u?int(8|16|32)(be)? {
 }
 
 
-\{(({hexdigit}|[ \-|\?\[\]\(\)\n\r\t]|\/\*(\/|\**[^*/])*\*+\/)+|\/\/.*)+\}  {
+\{(({hexdigit}|[ \-|\~\?\[\]\(\)\n\r\t]|\/\*(\/|\**[^*/])*\*+\/)+|\/\/.*)+\}  {
   // Match hex-digits with whitespace or comments. The latter are stripped
   // out by hex_lexer.l
   // TODO(vmalvarez): Integrate the hex string lexer and parser into this one,
@@ -763,10 +786,19 @@ void yywarning(
 
   vsnprintf(message, sizeof(message), message_fmt, message_args);
 
+  YR_RULE* current_rule = NULL;
+
+  if (compiler->current_rule_idx != UINT32_MAX)
+    current_rule = yr_arena_get_ptr(
+        compiler->arena,
+        YR_RULES_TABLE,
+        compiler->current_rule_idx * sizeof(YR_RULE));
+
   compiler->callback(
       YARA_ERROR_LEVEL_WARNING,
       file_name,
       compiler->current_line ? compiler->current_line : yyget_lineno(yyscanner),
+      current_rule,
       message,
       compiler->user_data);
 
@@ -793,12 +825,6 @@ void yyerror(
   char message[512] = {'\0'};
   char* file_name = NULL;
 
-  /*
-    if error_message != NULL the error comes from yyparse internal code
-    else the error comes from my code and the error code is set in
-    compiler->last_error
-  */
-
   compiler->errors++;
 
   if (compiler->current_line != 0)
@@ -817,6 +843,18 @@ void yyerror(
     file_name = NULL;
   }
 
+  YR_RULE* current_rule = NULL;
+
+  if (compiler->current_rule_idx != UINT32_MAX)
+    current_rule = yr_arena_get_ptr(
+        compiler->arena,
+        YR_RULES_TABLE,
+        compiler->current_rule_idx * sizeof(YR_RULE));
+
+  // if error_message != NULL the error comes from yyparse internal code
+  // else the error comes from my code and the error code is set in
+  // compiler->last_error
+
   if (error_message != NULL)
   {
     yr_compiler_set_error_extra_info(compiler, error_message);
@@ -828,6 +866,7 @@ void yyerror(
           YARA_ERROR_LEVEL_ERROR,
           file_name,
           compiler->last_error_line,
+          current_rule,
           error_message,
           compiler->user_data);
     }
@@ -837,11 +876,12 @@ void yyerror(
     yr_compiler_get_error_message(compiler, message, sizeof(message));
 
     compiler->callback(
-      YARA_ERROR_LEVEL_ERROR,
-      file_name,
-      compiler->last_error_line,
-      message,
-      compiler->user_data);
+        YARA_ERROR_LEVEL_ERROR,
+        file_name,
+        compiler->last_error_line,
+        current_rule,
+        message,
+        compiler->user_data);
   }
 }
 
@@ -854,10 +894,15 @@ int yr_lex_parse_rules_string(
 
   compiler->errors = 0;
 
+  if (yylex_init(&yyscanner) != 0)
+  {
+    compiler->errors = 1;
+    compiler->last_error = ERROR_INSUFFICIENT_MEMORY;
+    return compiler->errors;
+  }
+
   if (setjmp(compiler->error_recovery) != 0)
     return compiler->errors;
-
-  yylex_init(&yyscanner);
 
   #if YYDEBUG
   yydebug = 1;
@@ -881,10 +926,15 @@ int yr_lex_parse_rules_file(
 
   compiler->errors = 0;
 
+  if (yylex_init(&yyscanner) != 0)
+  {
+    compiler->errors = 1;
+    compiler->last_error = ERROR_INSUFFICIENT_MEMORY;
+    return compiler->errors;
+  }
+
   if (setjmp(compiler->error_recovery) != 0)
     return compiler->errors;
-
-  yylex_init(&yyscanner);
 
   #if YYDEBUG
   yydebug = 1;
@@ -950,7 +1000,13 @@ int yr_lex_parse_rules_fd(
     return compiler->errors;
   }
 
-  yylex_init(&yyscanner);
+  if (yylex_init(&yyscanner) != 0)
+  {
+    yr_free(buffer);
+    compiler->errors = 1;
+    compiler->last_error = ERROR_INSUFFICIENT_MEMORY;
+    return compiler->errors;
+  }
 
   #if YYDEBUG
   yydebug = 1;
