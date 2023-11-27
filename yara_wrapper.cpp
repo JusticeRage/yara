@@ -294,7 +294,6 @@ int get_match_data(YR_SCAN_CONTEXT* ctx, int message, void* message_data, void* 
             yr_rule_metas_foreach(rule, meta)
 			{
 				m->add_metadata(std::string(meta->identifier), meta->string);
-				++meta;
 			}
             yr_rule_strings_foreach(rule, s)
 			{
@@ -321,7 +320,6 @@ int get_match_data(YR_SCAN_CONTEXT* ctx, int message, void* message_data, void* 
                         m->add_found_string(ss.str(), match->offset);
                     }
 				}
-				++s;
 			}
 
 			target->push_back(m);
