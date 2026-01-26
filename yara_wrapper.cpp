@@ -17,10 +17,75 @@
 
 #include "yara_wrapper.h"
 
+#include <boost/system/api_config.hpp>
+#include <boost/system/error_code.hpp>
+
+#include <cstdlib>
+
 namespace yara
 {
 
 namespace bfs = boost::filesystem;
+
+namespace {
+
+bool is_up_to_date(const bfs::path& compiled, const bfs::path& source)
+{
+	if (!bfs::exists(compiled) || !bfs::exists(source)) {
+		return false;
+	}
+
+	return bfs::last_write_time(compiled) >= bfs::last_write_time(source);
+}
+
+std::string get_env_string(const char* name)
+{
+	const char* value = std::getenv(name);
+	return value ? std::string(value) : std::string();
+}
+
+std::string select_cache_root()
+{
+	const std::string env_dir = get_env_string("MANALYZE_CACHE_DIR");
+	if (!env_dir.empty()) {
+		return env_dir;
+	}
+
+#ifdef BOOST_WINDOWS_API
+	const std::string local_app_data = get_env_string("LOCALAPPDATA");
+	if (!local_app_data.empty()) {
+		return (bfs::path(local_app_data) / "Manalyze").string();
+	}
+#else
+	const std::string xdg_cache = get_env_string("XDG_CACHE_HOME");
+	if (!xdg_cache.empty()) {
+		return (bfs::path(xdg_cache) / "manalyze").string();
+	}
+
+	const std::string home = get_env_string("HOME");
+	if (!home.empty()) {
+		return (bfs::path(home) / ".cache" / "manalyze").string();
+	}
+#endif
+
+	return ".";
+}
+
+bfs::path compiled_rules_path(const std::string& rule_filename)
+{
+	const bfs::path source(rule_filename);
+	const std::string compiled_name = source.filename().string() + "c";
+	const std::string cache_root = select_cache_root();
+	return bfs::path(cache_root) / "yara_rules" / compiled_name;
+}
+
+void ensure_parent_dir(const bfs::path& path)
+{
+	boost::system::error_code ec;
+	bfs::create_directories(path, ec);
+}
+
+} // namespace
 
 Yara::Yara()
 {
@@ -106,27 +171,28 @@ bool Yara::load_rules(const std::string& rule_filename)
 		return false;
 	}
 
-	// Look for a compiled version of the rule file first.
-	if (bfs::exists(rule_filename + "c")) // File extension is .yarac instead of .yara.
-	{
-		// If the compiled rules are older than their source, recompile them.
-		if (bfs::exists(rule_filename) && bfs::last_write_time(rule_filename) > bfs::last_write_time(rule_filename + "c"))
-		{
-			PRINT_WARNING << "New version of " << rule_filename << " detected. The rules will be recompiled." << std::endl;
-			boost::filesystem::remove(rule_filename + "c");
-			retval = ERROR_INVALID_FILE;
-		}
-		else {
-			retval = yr_rules_load((rule_filename + "c").c_str(), &_rules);
-		}
+	const bfs::path source(rule_filename);
+	const bfs::path source_compiled = bfs::path(rule_filename + "c");
+	const bfs::path cache_compiled = compiled_rules_path(rule_filename);
+
+	if (is_up_to_date(cache_compiled, source)) {
+		retval = yr_rules_load(cache_compiled.string().c_str(), &_rules);
+	}
+	else if (is_up_to_date(source_compiled, source)) {
+		retval = yr_rules_load(source_compiled.string().c_str(), &_rules);
 	}
 	else {
 		retval = yr_rules_load(rule_filename.c_str(), &_rules);
 	}
 
 	// Yara rules compiled with a previous Yara version. Delete and recompile.
-	if (retval == ERROR_UNSUPPORTED_FILE_VERSION && bfs::exists(rule_filename + "c")) {
-		boost::filesystem::remove(rule_filename + "c");
+	if (retval == ERROR_UNSUPPORTED_FILE_VERSION) {
+		if (bfs::exists(cache_compiled)) {
+			boost::filesystem::remove(cache_compiled);
+		}
+		if (bfs::exists(source_compiled)) {
+			boost::filesystem::remove(source_compiled);
+		}
 	}
 
 	if (retval != ERROR_SUCCESS && retval != ERROR_INVALID_FILE && retval != ERROR_UNSUPPORTED_FILE_VERSION)
@@ -140,7 +206,7 @@ bool Yara::load_rules(const std::string& rule_filename)
 		_current_rules = rule_filename;
 		return true;
 	}
-	else if (retval == ERROR_INVALID_FILE) // Uncompiled rules
+	else if (retval == ERROR_INVALID_FILE || retval == ERROR_UNSUPPORTED_FILE_VERSION) // Uncompiled rules
 	{
 		if (yr_compiler_create(&_compiler) != ERROR_SUCCESS) {
 			return false;
@@ -150,26 +216,35 @@ bool Yara::load_rules(const std::string& rule_filename)
 		if (rule_file == nullptr) {
 			return false;
 		}
-		retval = yr_compiler_add_file(_compiler, rule_file, nullptr, rule_filename.c_str());
-		if (retval != 0)
-		{
-			PRINT_ERROR << "Could not compile yara rules (" << retval << " error(s))." << std::endl;
-			goto END;
-		}
-		retval = yr_compiler_get_rules(_compiler, &_rules);
-		if (retval != ERROR_SUCCESS) {
-			goto END;
-		}
+		bool ok = false;
+		do {
+			retval = yr_compiler_add_file(_compiler, rule_file, nullptr, rule_filename.c_str());
+			if (retval != 0)
+			{
+				PRINT_ERROR << "Could not compile yara rules (" << retval << " error(s))." << std::endl;
+				break;
+			}
+			retval = yr_compiler_get_rules(_compiler, &_rules);
+			if (retval != ERROR_SUCCESS) {
+				break;
+			}
 
-		// Save the compiled rules to improve load times.
-		retval = yr_rules_save(_rules, (rule_filename + "c").c_str());
-		if (retval != ERROR_SUCCESS) {
-			goto END;
-		}
+			// Save the compiled rules to improve load times.
+			const bfs::path cache_dir = cache_compiled.parent_path();
+			if (!cache_dir.empty()) {
+				ensure_parent_dir(cache_dir);
+			}
+			retval = yr_rules_save(_rules, cache_compiled.string().c_str());
+			if (retval != ERROR_SUCCESS) {
+				PRINT_WARNING << "Could not save compiled Yara rules to " << cache_compiled.string()
+				              << " (" << translate_error(retval) << ")." << std::endl;
+			}
 
-		res = true;
-		_current_rules = rule_filename;
-		END:
+			ok = true;
+			_current_rules = rule_filename;
+		} while (false);
+
+		res = ok;
 		fclose(rule_file);
 	}
 	return res;

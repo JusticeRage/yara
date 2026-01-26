@@ -1,5 +1,7 @@
-cmake_minimum_required (VERSION 2.6)
-project (yara)
+cmake_minimum_required (VERSION 3.12)
+project (yara LANGUAGES C CXX)
+
+include(GNUInstallDirs)
 find_package (Threads)
 
 add_library(yara SHARED yara_wrapper.cpp yara_errors.cpp ahocorasick.c arena.c atoms.c compiler.c exec.c exefiles.c filemap.c grammar.c hash.c hex_grammar.c hex_lexer.c lexer.c libyara.c mem.c modules.c object.c parser.c proc.c re.c re_grammar.c re_lexer.c rules.c scan.c sizedstr.c stream.c strutils.c endian.c bitmask.c scanner.c stopwatch.c stack.c base64.c threading.c notebook.c
@@ -29,10 +31,7 @@ endif()
 if ("${CMAKE_SYSTEM}" MATCHES "Linux")
 	# Copy binaries
 	install(TARGETS yara
-			RUNTIME DESTINATION /usr/local/bin
-			LIBRARY DESTINATION /usr/local/lib
-			ARCHIVE DESTINATION /usr/local/lib/static)
-
-	# Run ldconfig.
-	install(CODE "execute_process(COMMAND ldconfig)")
+			RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+			LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+			ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 endif()
