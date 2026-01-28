@@ -89,3 +89,4 @@ windows/*/packages/
 
 tests/mapper
 CMakeFiles
+cmake_install.cmake
