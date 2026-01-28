@@ -15,8 +15,6 @@ You should have received a copy of the GNU General Public License
 along with Manalyze.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include <boost/assign.hpp>
-
 #include "yara_wrapper.h"
 
 namespace yara {

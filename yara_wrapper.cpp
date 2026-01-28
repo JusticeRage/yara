@@ -17,15 +17,14 @@
 
 #include "yara_wrapper.h"
 
-#include <boost/system/api_config.hpp>
-#include <boost/system/error_code.hpp>
+#include <system_error>
 
 #include <cstdlib>
 
 namespace yara
 {
 
-namespace bfs = boost::filesystem;
+namespace bfs = std::filesystem;
 
 namespace {
 
@@ -51,7 +50,7 @@ std::string select_cache_root()
 		return env_dir;
 	}
 
-#ifdef BOOST_WINDOWS_API
+#if defined(_WIN32)
 	const std::string local_app_data = get_env_string("LOCALAPPDATA");
 	if (!local_app_data.empty()) {
 		return (bfs::path(local_app_data) / "Manalyze").string();
@@ -81,7 +80,7 @@ bfs::path compiled_rules_path(const std::string& rule_filename)
 
 void ensure_parent_dir(const bfs::path& path)
 {
-	boost::system::error_code ec;
+	std::error_code ec;
 	bfs::create_directories(path, ec);
 }
 
@@ -104,7 +103,7 @@ Yara::~Yara()
 // ----------------------------------------------------------------------------
 
 pYara Yara::create() {
-	return boost::make_shared<Yara>();
+	return std::make_shared<Yara>();
 }
 
 // ----------------------------------------------------------------------------
@@ -188,10 +187,10 @@ bool Yara::load_rules(const std::string& rule_filename)
 	// Yara rules compiled with a previous Yara version. Delete and recompile.
 	if (retval == ERROR_UNSUPPORTED_FILE_VERSION) {
 		if (bfs::exists(cache_compiled)) {
-			boost::filesystem::remove(cache_compiled);
+			std::filesystem::remove(cache_compiled);
 		}
 		if (bfs::exists(source_compiled)) {
-			boost::filesystem::remove(source_compiled);
+			std::filesystem::remove(source_compiled);
 		}
 	}
 
@@ -252,10 +251,10 @@ bool Yara::load_rules(const std::string& rule_filename)
 
 // ----------------------------------------------------------------------------
 
-const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
+const_matches Yara::scan_bytes(const std::vector<std::uint8_t>& bytes) const
 {
 	pcallback_data cb_data(new callback_data);
-	cb_data->yara_matches = boost::make_shared<match_vector>();
+	cb_data->yara_matches = std::make_shared<match_vector>();
 	int retval;
 	if (_rules == nullptr || bytes.empty())
 	{
@@ -267,7 +266,7 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 
 	// Make a copy of the input buffer, because we can't be sure that Yara will not modify it
 	// and the constness of the input has to be guaranteed.
-	std::vector<boost::uint8_t> copy(bytes.begin(), bytes.end());
+	std::vector<std::uint8_t> copy(bytes.begin(), bytes.end());
 
 	// Yara setup done. Scan the file.
 	retval = yr_rules_scan_mem(_rules,
@@ -296,7 +295,7 @@ const_matches Yara::scan_bytes(const std::vector<boost::uint8_t>& bytes) const
 const_matches Yara::scan_file(const std::string& path, pmanape_data pe_data) const
 {
 	pcallback_data cb_data(new callback_data);
-	cb_data->yara_matches = boost::make_shared<match_vector>();
+	cb_data->yara_matches = std::make_shared<match_vector>();
 	cb_data->pe_info = std::move(pe_data);
 	int retval;
 	if (_rules == nullptr)
@@ -364,7 +363,7 @@ int get_match_data(YR_SCAN_CONTEXT* ctx, int message, void* message_data, void* 
 		case CALLBACK_MSG_RULE_MATCHING:
 			rule = (YR_RULE*) message_data;
 			target = cb_data->get()->yara_matches;
-			m = boost::make_shared<Match>();
+			m = std::make_shared<Match>();
 
             yr_rule_metas_foreach(rule, meta)
 			{

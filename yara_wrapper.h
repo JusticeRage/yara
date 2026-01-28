@@ -31,11 +31,9 @@
 
 #include <stdlib.h>
 
-#include <boost/make_shared.hpp>
-#include <boost/cstdint.hpp>
-#include <boost/filesystem.hpp>
-#include <boost/system/api_config.hpp>
-
+#include <memory>
+#include <cstdint>
+#include <filesystem>
 // Contains the definition of the structure used to communicate with the module.
 #include "yara/modules/manape_data.h"
 
@@ -50,7 +48,7 @@ extern "C" {
 
 #include "manacommons/color.h"
 
-#if defined BOOST_WINDOWS_API
+#if defined _WIN32
 	#ifdef YARA_EXPORT
 		#define Y_DECLSPEC __declspec(dllexport)
 	#else
@@ -82,16 +80,16 @@ void compiler_callback(int error_level, const char* file_name, int line_number, 
 class SingleMatch
 {
 public:
-	SingleMatch(const std::string& s, boost::uint64_t offset) :
+	SingleMatch(const std::string& s, std::uint64_t offset) :
 		_s(s), _offset(offset)
 	{}
 
 	std::string get_str() const { return _s; }
-	boost::uint64_t get_offset() const { return _offset; }
+	std::uint64_t get_offset() const { return _offset; }
 
 private:
 	std::string _s;
-	boost::uint64_t _offset;
+	std::uint64_t _offset;
 };
 
 /**
@@ -105,14 +103,14 @@ class Match
 public:
 	Match() : _metadata(), _found_strings() {}
 	typedef std::map<std::string, std::string> match_metadata;
-	typedef boost::shared_ptr<SingleMatch> pSingleMatch;
+	typedef std::shared_ptr<SingleMatch> pSingleMatch;
 
 	void add_metadata(const std::string& key, const std::string& value)	{
 		_metadata[key] = value;
 	}
 
-	void add_found_string(const std::string& found, boost::uint64_t offset) {
-		_found_strings.push_back(boost::make_shared<SingleMatch>(found, offset));
+	void add_found_string(const std::string& found, std::uint64_t offset) {
+		_found_strings.push_back(std::make_shared<SingleMatch>(found, offset));
 	}
 
 	match_metadata get_metadata() const { return _metadata; }
@@ -132,25 +130,25 @@ private:
 	std::vector<pSingleMatch>	_found_strings;
 };
 
-typedef boost::shared_ptr<Match> pMatch;
+typedef std::shared_ptr<Match> pMatch;
 typedef std::vector<pMatch> match_vector;
-typedef boost::shared_ptr<match_vector > matches;
-typedef boost::shared_ptr<const match_vector > const_matches;
+typedef std::shared_ptr<match_vector > matches;
+typedef std::shared_ptr<const match_vector > const_matches;
 
 // The structures used to communicate with the callback called by yara.
-typedef boost::shared_ptr<manape_data> pmanape_data;
+typedef std::shared_ptr<manape_data> pmanape_data;
 typedef struct callback_data_t {
 	matches yara_matches;
 	pmanape_data pe_info;
 } callback_data;
-typedef boost::shared_ptr<callback_data> pcallback_data;
+typedef std::shared_ptr<callback_data> pcallback_data;
 
 class Yara
 {
 public:
 	Y_DECLSPEC Yara();
 	Y_DECLSPEC virtual ~Yara();
-	Y_DECLSPEC static boost::shared_ptr<Yara> create();
+	Y_DECLSPEC static std::shared_ptr<Yara> create();
 
 	/**
 	 *	@brief	Initializes the Yara engine.
@@ -176,11 +174,11 @@ public:
 	/**
 	 *	@brief	Tries to match a given input with the currently loaded Yara rules.
 	 *
-	 *	@param	const std::vector<boost::uint8_t>& bytes The bytes to scan.
+	 *	@param	const std::vector<std::uint8_t>& bytes The bytes to scan.
 	 *
 	 *	@return	A map containing the rule's metadata for all matching signatures.
 	 */
-	Y_DECLSPEC const_matches scan_bytes(const std::vector<boost::uint8_t>& bytes) const;
+	Y_DECLSPEC const_matches scan_bytes(const std::vector<std::uint8_t>& bytes) const;
 
 	/**
 	 *	@brief	Tries to match an input file with the currently loaded Yara rules.
@@ -222,6 +220,6 @@ private:
 
 };
 
-typedef boost::shared_ptr<Yara> pYara;
+typedef std::shared_ptr<Yara> pYara;
 
 } // !namespace yara
